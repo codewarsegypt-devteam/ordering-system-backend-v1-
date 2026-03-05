@@ -193,7 +193,7 @@ export async function updateStatus(req, res) {
   if (!status || !STATUSES.includes(status)) {
     return res.status(400).json({ error: "status must be active or disabled" });
   }
-  if (req.user.role === "manager") {
+  if (req.user.role === "manager" || req.user.role === "owner") {
     const { data: target } = await supabaseAdmin
       .from("user")
       .select("role")

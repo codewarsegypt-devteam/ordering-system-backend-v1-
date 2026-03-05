@@ -105,6 +105,7 @@ export async function getQr(req, res) {
     branch_id: row.branch_id,
   });
 }
+
 export async function getStoredQr(req, res) {
   const { tableId } = req.params;
   const { data, error } = await supabaseAdmin

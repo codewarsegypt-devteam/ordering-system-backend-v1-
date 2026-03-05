@@ -70,7 +70,12 @@ async function resolveModifierNamePrice(merchantId, modifierId) {
  * Validate that selected modifiers per group satisfy item_modifier_group min/max rules.
  * Returns { valid: true } or { valid: false, error: string }.
  */
-async function validateModifierRules(merchantId, itemId, itemName, selectedModifierIds) {
+async function validateModifierRules(
+  merchantId,
+  itemId,
+  itemName,
+  selectedModifierIds,
+) {
   const { data: rules } = await supabaseAdmin
     .from("item_modifier_group")
     .select("modifier_group_id, min_select, max_select")
@@ -120,7 +125,10 @@ async function rollbackOrder(orderId) {
     .eq("order_id", orderId);
   const oiIds = (orderItems || []).map((oi) => oi.id);
   if (oiIds.length) {
-    await supabaseAdmin.from("order_item_modifier").delete().in("order_item_id", oiIds);
+    await supabaseAdmin
+      .from("order_item_modifier")
+      .delete()
+      .in("order_item_id", oiIds);
     await supabaseAdmin.from("order_items").delete().eq("order_id", orderId);
   }
   await supabaseAdmin.from("order").delete().eq("id", orderId);
@@ -144,11 +152,9 @@ export async function create(req, res) {
     !Array.isArray(lineItems) ||
     lineItems.length === 0
   ) {
-    return res
-      .status(400)
-      .json({
-        error: "merchant_id, branch_id, order_type, and items required",
-      });
+    return res.status(400).json({
+      error: "merchant_id, branch_id, order_type, and items required",
+    });
   }
   if (!ORDER_TYPES.includes(order_type))
     return res.status(400).json({ error: "Invalid order_type" });
@@ -186,7 +192,10 @@ export async function create(req, res) {
         error: `Quantity must be between ${MIN_QUANTITY} and ${MAX_QUANTITY}`,
       });
     }
-    const qty = Math.min(MAX_QUANTITY, Math.max(MIN_QUANTITY, Math.floor(rawQty)));
+    const qty = Math.min(
+      MAX_QUANTITY,
+      Math.max(MIN_QUANTITY, Math.floor(rawQty)),
+    );
     if (qty !== rawQty && rawQty > MAX_QUANTITY) {
       return res.status(400).json({
         error: `Quantity must be between ${MIN_QUANTITY} and ${MAX_QUANTITY}`,
@@ -206,7 +215,9 @@ export async function create(req, res) {
         error: "Item is not available for ordering (hidden or out of stock)",
       });
     }
-    const selectedModIds = (modifiers || []).map((m) => m.modifier_id).filter(Boolean);
+    const selectedModIds = (modifiers || [])
+      .map((m) => m.modifier_id)
+      .filter(Boolean);
     const modRules = await validateModifierRules(
       merchant_id,
       item_id,
@@ -225,16 +236,24 @@ export async function create(req, res) {
         .eq("merchant_id", merchant_id)
         .single();
       if (!variant) {
-        return res.status(400).json({ error: `Variant ${variant_id} not found for item` });
+        return res
+          .status(400)
+          .json({ error: `Variant ${variant_id} not found for item` });
       }
     }
     const unit_price = await resolveUnitPrice(merchant_id, item_id, variant_id);
     if (unit_price < 0) {
-      return res.status(400).json({ error: "Invalid price: negative prices are not allowed" });
+      return res
+        .status(400)
+        .json({ error: "Invalid price: negative prices are not allowed" });
     }
     const name_snapshot = await resolveItemName(merchant_id, item_id);
     if (!name_snapshot || name_snapshot.trim() === "") {
-      return res.status(400).json({ error: `Item ${item_id} not found or does not belong to this merchant` });
+      return res
+        .status(400)
+        .json({
+          error: `Item ${item_id} not found or does not belong to this merchant`,
+        });
     }
     const price_snapshot = unit_price;
     const line_total = unit_price * qty;
@@ -249,7 +268,11 @@ export async function create(req, res) {
     total_price += line_total;
     for (const mod of modifiers || []) {
       const modLineQty = Number(mod.quantity) || 1;
-      if (!Number.isFinite(modLineQty) || modLineQty < MIN_QUANTITY || modLineQty > MAX_QUANTITY) {
+      if (
+        !Number.isFinite(modLineQty) ||
+        modLineQty < MIN_QUANTITY ||
+        modLineQty > MAX_QUANTITY
+      ) {
         return res.status(400).json({
           error: `Modifier quantity must be between ${MIN_QUANTITY} and ${MAX_QUANTITY}`,
         });
@@ -268,7 +291,11 @@ export async function create(req, res) {
       const name = modRow.name_en ?? "";
       const price = Number(modRow.price);
       if (price < 0) {
-        return res.status(400).json({ error: "Invalid modifier price: negative prices are not allowed" });
+        return res
+          .status(400)
+          .json({
+            error: "Invalid modifier price: negative prices are not allowed",
+          });
       }
       const modQty = Math.floor(modLineQty) * qty;
       total_price += price * modQty;
@@ -321,13 +348,15 @@ export async function create(req, res) {
     }
     const forThisItem = modifierRows.filter((m) => m._order_item_index === i);
     for (const m of forThisItem) {
-      const { error: modErr } = await supabaseAdmin.from("order_item_modifier").insert({
-        order_item_id: oi.id,
-        modifier_id: m.modifier_id,
-        name_snapshot: m.name_snapshot,
-        price_snapshot: m.price_snapshot,
-        price: m.price,
-      });
+      const { error: modErr } = await supabaseAdmin
+        .from("order_item_modifier")
+        .insert({
+          order_item_id: oi.id,
+          modifier_id: m.modifier_id,
+          name_snapshot: m.name_snapshot,
+          price_snapshot: m.price_snapshot,
+          price: m.price,
+        });
       if (modErr) {
         await rollbackOrder(order.id);
         return res.status(400).json({
@@ -397,7 +426,8 @@ export async function getOne(req, res) {
     .select("*")
     .eq("id", orderId)
     .single();
-  if (error || !order) return res.status(404).json({ error: "Order not found" });
+  if (error || !order)
+    return res.status(404).json({ error: "Order not found" });
   const { data: branch } = await supabaseAdmin
     .from("branch")
     .select("merchant_id")

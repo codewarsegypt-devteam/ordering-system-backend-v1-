@@ -23,10 +23,20 @@ export async function login(req, res) {
   if (user.status !== "active") {
     return res.status(403).json({ error: "Account disabled" });
   }
+  const [merchantRes, branchRes] = await Promise.all([
+    user.merchant_id
+      ? supabaseAdmin.from("merchant").select("name").eq("id", user.merchant_id).single()
+      : Promise.resolve({ data: null }),
+    user.branch_id
+      ? supabaseAdmin.from("branch").select("name").eq("id", user.branch_id).single()
+      : Promise.resolve({ data: null }),
+  ]);
   const access_token = sign({ sub: user.id, role: user.role });
   return res.json({
     access_token,
     user: toUserResponse(user),
+    merchant_name: merchantRes.data?.name ?? null,
+    branch_name: branchRes.data?.name ?? null,
   });
 }
 
@@ -34,6 +44,19 @@ export function logout(req, res) {
   res.status(200).json({ message: "Logged out" });
 }
 
-export function me(req, res) {
-  res.json(toUserResponse(req.user));
+export async function me(req, res) {
+  const user = req.user;
+  const [merchantRes, branchRes] = await Promise.all([
+    user.merchant_id
+      ? supabaseAdmin.from("merchant").select("name").eq("id", user.merchant_id).single()
+      : Promise.resolve({ data: null }),
+    user.branch_id
+      ? supabaseAdmin.from("branch").select("name").eq("id", user.branch_id).single()
+      : Promise.resolve({ data: null }),
+  ]);
+  res.json({
+    ...toUserResponse(user),
+    merchant_name: merchantRes.data?.name ?? null,
+    branch_name: branchRes.data?.name ?? null,
+  });
 }
