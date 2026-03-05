@@ -1,4 +1,7 @@
+import jwt from "jsonwebtoken";
 import { supabaseAdmin } from "../db_connection.js";
+
+const JWT_TABLE_SECRET = process.env.JWT_TABLE_SECRET || process.env.JWT_SECRET || "dev-secret";
 
 /** Get stored table QR code by table id (public, no auth). */
 export async function getTableQrcodeByTableId(req, res) {
@@ -13,10 +16,132 @@ export async function getTableQrcodeByTableId(req, res) {
   res.json(data);
 }
 
+
+/**
+ * أول حاجة تُستدعى بعد مسح الـ QR.
+ * GET /public/scan?t=JWT_TOKEN
+ * يرجع: merchant_id, branch_id, table_id, menus (قائمة المنيهات بدون تفاصيل categories/items).
+ */
+
+export async function getScan(req, res) {
+  const { t: token } = req.query;
+  if (!token) {
+    return res.status(400).json({ error: "QR token (t) required. Use the URL from the scanned QR." });
+  }
+  let payload;
+  try {
+    payload = jwt.verify(token, JWT_TABLE_SECRET);
+  } catch {
+    return res.status(400).json({ error: "Invalid or expired QR code. Please scan again." });
+  }
+  const { tableId, merchantId: tokenMerchantId, tableCode: tokenTableCode } = payload;
+  if (!tableId || !tokenMerchantId) {
+    return res.status(400).json({ error: "Invalid QR code payload." });
+  }
+  const { data: tbl, error: tblErr } = await supabaseAdmin
+    .from("table")
+    .select("id, branch_id, merchant_id, qr_code, is_active, number")
+    .eq("id", tableId)
+    .eq("merchant_id", tokenMerchantId)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (tblErr || !tbl) {
+    return res.status(400).json({ error: "Table not found or inactive. Please use a valid table QR." });
+  }
+  if (tokenTableCode != null && tbl.qr_code !== tokenTableCode) {
+    return res.status(400).json({ error: "Table code mismatch. Please scan the correct table QR." });
+  }
+  const merchantId = tokenMerchantId;
+  const branch_id = tbl.branch_id;
+  const table_id = tbl.id;
+
+  const [merchantRes, branchRes, menusRes] = await Promise.all([
+    supabaseAdmin.from("merchant").select("name, logo").eq("id", merchantId).single(),
+    supabaseAdmin.from("branch").select("name").eq("id", branch_id).single(),
+    supabaseAdmin
+      .from("menue")
+      .select("*")
+      .eq("merchant_id", merchantId)
+      .eq("is_active", true)
+      .order("created_at", { ascending: true }),
+  ]);
+
+  const { data: merchant } = merchantRes;
+  const { data: branch } = branchRes;
+  const { data: menus } = menusRes;
+
+  res.json({
+    merchant_id: merchantId,
+    merchant_name: merchant?.name ?? null,
+    merchant_logo: merchant?.logo ?? null,
+    branch_id,
+    branch_name: branch?.name ?? null,
+    table_id,
+    table_name: tbl.number != null ? String(tbl.number) : null,
+    menus: menus || [],
+  });
+}
+
+// get menue by menue id
+export async function getMenueById(req, res) {
+
+}
+
+/**
+ * Resolve merchant_id, branch_id, table_id from either:
+ * - ?t=JWT_TOKEN (QR scan: token contains tableId, merchantId, tableCode — verified against DB)
+ * - ?merchantId=xxx&tableCode=yyy (legacy)
+ */
 export async function getMenu(req, res) {
-  const { merchantId, tableCode } = req.query;
-  if (!merchantId)
-    return res.status(400).json({ error: "merchantId required" });
+  const { t: token, merchantId: queryMerchantId, tableCode } = req.query;
+  let merchantId = queryMerchantId;
+  let branch_id = null;
+  let table_id = null;
+
+  if (token) {
+    let payload;
+    try {
+      payload = jwt.verify(token, JWT_TABLE_SECRET);
+    } catch {
+      return res.status(400).json({ error: "Invalid or expired QR code. Please scan again." });
+    }
+    const { tableId, merchantId: tokenMerchantId, tableCode: tokenTableCode} = payload;
+    if (!tableId || !tokenMerchantId) {
+      return res.status(400).json({ error: "Invalid QR code payload." });
+    }
+    const { data: tbl, error: tblErr } = await supabaseAdmin
+      .from("table")
+      .select("id, branch_id, merchant_id, qr_code, is_active")
+      .eq("id", tableId)
+      .eq("merchant_id", tokenMerchantId)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (tblErr || !tbl) {
+      return res.status(400).json({ error: "Table not found or inactive. Please use a valid table QR." });
+    }
+    if (tokenTableCode != null && tbl.qr_code !== tokenTableCode) {
+      return res.status(400).json({ error: "Table code mismatch. Please scan the correct table QR." });
+    }
+    merchantId = tokenMerchantId;
+    branch_id = tbl.branch_id;
+    table_id = tbl.id;
+  } else {
+    if (!queryMerchantId)
+      return res.status(400).json({ error: "merchantId or QR token (t) required" });
+    if (tableCode) {
+      const { data: tbl } = await supabaseAdmin
+        .from("table")
+        .select("id, branch_id")
+        .eq("qr_code", tableCode)
+        .eq("is_active", true)
+        .single();
+      if (tbl) {
+        table_id = tbl.id;
+        branch_id = tbl.branch_id;
+      }
+    }
+  }
+
   const { data: menu } = await supabaseAdmin
     .from("menue")
     .select("*")
@@ -25,20 +150,6 @@ export async function getMenu(req, res) {
     .limit(1)
     .single();
   if (!menu) return res.status(404).json({ error: "Menu not found" });
-  let branch_id = null;
-  let table_id = null;
-  if (tableCode) {
-    const { data: tbl } = await supabaseAdmin
-      .from("table")
-      .select("id, branch_id")
-      .eq("qr_code", tableCode)
-      .eq("is_active", true)
-      .single();
-    if (tbl) {
-      table_id = tbl.id;
-      branch_id = tbl.branch_id;
-    }
-  }
   const { data: categories } = await supabaseAdmin
     .from("category")
     .select("*")
@@ -49,6 +160,106 @@ export async function getMenu(req, res) {
     merchant_id: merchantId,
     branch_id,
     table_id,
+    menu,
+    categories: [],
+  };
+  if (!categories?.length) return res.json(result);
+  for (const cat of categories) {
+    const { data: items } = await supabaseAdmin
+      .from("item")
+      .select("*")
+      .eq("category_id", cat.id)
+      .eq("status", "active");
+    const itemsWithDetails = [];
+    for (const it of items || []) {
+      const { data: variants } = await supabaseAdmin
+        .from("item_variant")
+        .select("*")
+        .eq("item_id", it.id);
+      const { data: imgLinks } = await supabaseAdmin
+        .from("item_modifier_group")
+        .select("*")
+        .eq("item_id", it.id);
+      const modifier_groups = [];
+      if (imgLinks?.length) {
+        for (const rule of imgLinks) {
+          const { data: group } = await supabaseAdmin
+            .from("modifier_group")
+            .select("*")
+            .eq("id", rule.modifier_group_id)
+            .single();
+          const { data: mods } = await supabaseAdmin
+            .from("modifiers")
+            .select("*")
+            .eq("modifier_group_id", rule.modifier_group_id);
+          modifier_groups.push({
+            group: group || {},
+            rule: { min_select: rule.min_select, max_select: rule.max_select },
+            modifiers: mods || [],
+          });
+        }
+      }
+      itemsWithDetails.push({
+        ...it,
+        variants: variants || [],
+        modifier_groups,
+      });
+    }
+    result.categories.push({ ...cat, items: itemsWithDetails });
+  }
+  res.json(result);
+}
+
+/**
+ * Get a single menu by id with full details (categories, items, variants, modifier_groups).
+ * GET /public/menu/:menuId?t=TOKEN — التوكين مطلوب للأمان (من مسح الـ QR).
+ */
+export async function getMenuById(req, res) {
+  const { menuId } = req.params;
+  const { t: token } = req.query;
+  if (!token) {
+    return res.status(401).json({ error: "Token (t) required. Scan the table QR first." });
+  }
+  let payload;
+  try {
+    payload = jwt.verify(token, JWT_TABLE_SECRET);
+  } catch {
+    return res.status(401).json({ error: "Invalid or expired QR code. Please scan again." });
+  }
+  const { tableId, merchantId: tokenMerchantId } = payload;
+  if (!tableId || !tokenMerchantId) {
+    return res.status(401).json({ error: "Invalid QR code payload." });
+  }
+  
+  const { data: tbl } = await supabaseAdmin
+    .from("table")
+    .select("id, merchant_id")
+    .eq("id", tableId)
+    .eq("merchant_id", tokenMerchantId)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (!tbl) {
+    return res.status(401).json({ error: "Table not found or inactive. Please use a valid table QR." });
+  }
+  const { data: menu, error: menuErr } = await supabaseAdmin
+    .from("menue")
+    .select("*")
+    .eq("id", menuId)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (menuErr || !menu) {
+    return res.status(404).json({ error: "Menu not found" });
+  }
+  if (menu.merchant_id !== tokenMerchantId) {
+    return res.status(403).json({ error: "You do not have access to this menu." });
+  }
+  const { data: categories } = await supabaseAdmin
+    .from("category")
+    .select("*")
+    .eq("menue_id", menu.id)
+    .eq("is_active", true)
+    .order("sort_order");
+  const result = {
     menu,
     categories: [],
   };

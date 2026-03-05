@@ -24,5 +24,4 @@ router.delete(
 );
 router.get("/:tableId/qr", requireStaff, asyncHandler(tablesController.getQr));
 router.get("/:tableId/qrcode", requireStaff, asyncHandler(tablesController.getStoredQr));
-
 export default router;
