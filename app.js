@@ -2,7 +2,8 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
-
+import { Server } from "socket.io";
+import http from "http";
 import { errorHandler } from "./middleware/errorHandler.js";
 import {
   authRoutes,
@@ -22,6 +23,23 @@ import {
 } from "./routes/index.js";
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: "*" },
+});
+
+app.set("io", io);
+
+io.on("connection", (socket) => {
+  console.log("a user connected", socket.id);
+  socket.on("disconnect", () => {
+    console.log("a user disconnected", socket.id);
+  });
+  socket.on("join:branch", (branchId) => {
+    if (branchId) socket.join(`branch:${branchId}`);
+  });
+});
+
 app.use(cors());
 app.use(morgan("dev"));
 app.use(express.json());
@@ -55,3 +73,4 @@ app.use((req, res) => {
 app.use(errorHandler);
 
 export default app;
+export { server };

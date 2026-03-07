@@ -1,7 +1,9 @@
 import jwt from "jsonwebtoken";
 import { supabaseAdmin } from "../db_connection.js";
+import * as ordersController from "./orders.controller.js";
 
-const JWT_TABLE_SECRET = process.env.JWT_TABLE_SECRET || process.env.JWT_SECRET || "dev-secret";
+const JWT_TABLE_SECRET =
+  process.env.JWT_TABLE_SECRET || process.env.JWT_SECRET || "dev-secret";
 
 /** Get stored table QR code by table id (public, no auth). */
 export async function getTableQrcodeByTableId(req, res) {
@@ -12,10 +14,10 @@ export async function getTableQrcodeByTableId(req, res) {
     .eq("table_id", tableId)
     .maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.status(404).json({ error: "QR code not found for this table" });
+  if (!data)
+    return res.status(404).json({ error: "QR code not found for this table" });
   res.json(data);
 }
-
 
 /**
  * أول حاجة تُستدعى بعد مسح الـ QR.
@@ -26,15 +28,23 @@ export async function getTableQrcodeByTableId(req, res) {
 export async function getScan(req, res) {
   const { t: token } = req.query;
   if (!token) {
-    return res.status(400).json({ error: "QR token (t) required. Use the URL from the scanned QR." });
+    return res.status(400).json({
+      error: "QR token (t) required. Use the URL from the scanned QR.",
+    });
   }
   let payload;
   try {
     payload = jwt.verify(token, JWT_TABLE_SECRET);
   } catch {
-    return res.status(400).json({ error: "Invalid or expired QR code. Please scan again." });
+    return res
+      .status(400)
+      .json({ error: "Invalid or expired QR code. Please scan again." });
   }
-  const { tableId, merchantId: tokenMerchantId, tableCode: tokenTableCode } = payload;
+  const {
+    tableId,
+    merchantId: tokenMerchantId,
+    tableCode: tokenTableCode,
+  } = payload;
   if (!tableId || !tokenMerchantId) {
     return res.status(400).json({ error: "Invalid QR code payload." });
   }
@@ -46,17 +56,25 @@ export async function getScan(req, res) {
     .eq("is_active", true)
     .maybeSingle();
   if (tblErr || !tbl) {
-    return res.status(400).json({ error: "Table not found or inactive. Please use a valid table QR." });
+    return res.status(400).json({
+      error: "Table not found or inactive. Please use a valid table QR.",
+    });
   }
   if (tokenTableCode != null && tbl.qr_code !== tokenTableCode) {
-    return res.status(400).json({ error: "Table code mismatch. Please scan the correct table QR." });
+    return res.status(400).json({
+      error: "Table code mismatch. Please scan the correct table QR.",
+    });
   }
   const merchantId = tokenMerchantId;
   const branch_id = tbl.branch_id;
   const table_id = tbl.id;
 
   const [merchantRes, branchRes, menusRes] = await Promise.all([
-    supabaseAdmin.from("merchant").select("name, logo").eq("id", merchantId).single(),
+    supabaseAdmin
+      .from("merchant")
+      .select("name, logo")
+      .eq("id", merchantId)
+      .single(),
     supabaseAdmin.from("branch").select("name").eq("id", branch_id).single(),
     supabaseAdmin
       .from("menue")
@@ -82,11 +100,6 @@ export async function getScan(req, res) {
   });
 }
 
-// get menue by menue id
-export async function getMenueById(req, res) {
-
-}
-
 /**
  * Resolve merchant_id, branch_id, table_id from either:
  * - ?t=JWT_TOKEN (QR scan: token contains tableId, merchantId, tableCode — verified against DB)
@@ -103,9 +116,15 @@ export async function getMenu(req, res) {
     try {
       payload = jwt.verify(token, JWT_TABLE_SECRET);
     } catch {
-      return res.status(400).json({ error: "Invalid or expired QR code. Please scan again." });
+      return res
+        .status(400)
+        .json({ error: "Invalid or expired QR code. Please scan again." });
     }
-    const { tableId, merchantId: tokenMerchantId, tableCode: tokenTableCode} = payload;
+    const {
+      tableId,
+      merchantId: tokenMerchantId,
+      tableCode: tokenTableCode,
+    } = payload;
     if (!tableId || !tokenMerchantId) {
       return res.status(400).json({ error: "Invalid QR code payload." });
     }
@@ -117,17 +136,23 @@ export async function getMenu(req, res) {
       .eq("is_active", true)
       .maybeSingle();
     if (tblErr || !tbl) {
-      return res.status(400).json({ error: "Table not found or inactive. Please use a valid table QR." });
+      return res.status(400).json({
+        error: "Table not found or inactive. Please use a valid table QR.",
+      });
     }
     if (tokenTableCode != null && tbl.qr_code !== tokenTableCode) {
-      return res.status(400).json({ error: "Table code mismatch. Please scan the correct table QR." });
+      return res.status(400).json({
+        error: "Table code mismatch. Please scan the correct table QR.",
+      });
     }
     merchantId = tokenMerchantId;
     branch_id = tbl.branch_id;
     table_id = tbl.id;
   } else {
     if (!queryMerchantId)
-      return res.status(400).json({ error: "merchantId or QR token (t) required" });
+      return res
+        .status(400)
+        .json({ error: "merchantId or QR token (t) required" });
     if (tableCode) {
       const { data: tbl } = await supabaseAdmin
         .from("table")
@@ -218,19 +243,23 @@ export async function getMenuById(req, res) {
   const { menuId } = req.params;
   const { t: token } = req.query;
   if (!token) {
-    return res.status(401).json({ error: "Token (t) required. Scan the table QR first." });
+    return res
+      .status(401)
+      .json({ error: "Token (t) required. Scan the table QR first." });
   }
   let payload;
   try {
     payload = jwt.verify(token, JWT_TABLE_SECRET);
   } catch {
-    return res.status(401).json({ error: "Invalid or expired QR code. Please scan again." });
+    return res
+      .status(401)
+      .json({ error: "Invalid or expired QR code. Please scan again." });
   }
   const { tableId, merchantId: tokenMerchantId } = payload;
   if (!tableId || !tokenMerchantId) {
     return res.status(401).json({ error: "Invalid QR code payload." });
   }
-  
+
   const { data: tbl } = await supabaseAdmin
     .from("table")
     .select("id, merchant_id")
@@ -239,7 +268,9 @@ export async function getMenuById(req, res) {
     .eq("is_active", true)
     .maybeSingle();
   if (!tbl) {
-    return res.status(401).json({ error: "Table not found or inactive. Please use a valid table QR." });
+    return res.status(401).json({
+      error: "Table not found or inactive. Please use a valid table QR.",
+    });
   }
   const { data: menu, error: menuErr } = await supabaseAdmin
     .from("menue")
@@ -251,7 +282,9 @@ export async function getMenuById(req, res) {
     return res.status(404).json({ error: "Menu not found" });
   }
   if (menu.merchant_id !== tokenMerchantId) {
-    return res.status(403).json({ error: "You do not have access to this menu." });
+    return res
+      .status(403)
+      .json({ error: "You do not have access to this menu." });
   }
   const { data: categories } = await supabaseAdmin
     .from("category")
@@ -416,7 +449,10 @@ export async function validateCart(req, res) {
           hasModError = true;
           break;
         }
-        const selQty = Math.min(100, Math.max(1, Math.floor(Number(sel.quantity) || 1)));
+        const selQty = Math.min(
+          100,
+          Math.max(1, Math.floor(Number(sel.quantity) || 1)),
+        );
         line_total += modPrice * selQty * quantityValid;
       }
     }
@@ -437,4 +473,19 @@ export async function validateCart(req, res) {
     totals: { subtotal, total: subtotal },
     line_items,
   });
+}
+
+/**
+ * Create order (public). Accepts token (query ?t= or body t/token), notes, items.
+ * Delegates to orders.controller.create which inserts order, order_items, order_item_modifier per schema.
+ */
+export async function createOrder(req, res) {
+  const token = req.query.t || req.body?.t || req.body?.token;
+  if (!token) {
+    return res
+      .status(401)
+      .json({ error: "Token (t or token) required. Scan the table QR first." });
+  }
+  req.query = { ...req.query, t: token };
+  return ordersController.create(req, res);
 }

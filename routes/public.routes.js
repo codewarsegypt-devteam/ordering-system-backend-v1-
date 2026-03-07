@@ -6,11 +6,11 @@ const router = Router();
 
 router.get("/scan", asyncHandler(publicController.getScan));
 router.get("/menu/:menuId", asyncHandler(publicController.getMenuById));
-router.get("/menu", asyncHandler(publicController.getMenu));
+// router.get("/menu", asyncHandler(publicController.getMenu));
 router.post("/cart/validate", asyncHandler(publicController.validateCart));
 router.get(
   "/table/:tableId/qrcode",
   asyncHandler(publicController.getTableQrcodeByTableId),
 );
-
+router.post("/create-order", asyncHandler(publicController.createOrder));
 export default router;

@@ -1,5 +1,7 @@
 import { supabaseAdmin } from "../db_connection.js";
-
+import jwt from "jsonwebtoken";
+const JWT_TABLE_SECRET =
+  process.env.JWT_TABLE_SECRET || process.env.JWT_SECRET || "dev-secret";
 const ORDER_STATUSES = [
   "draft",
   "placed",
@@ -135,55 +137,75 @@ async function rollbackOrder(orderId) {
 }
 
 export async function create(req, res) {
+  const { t: token } = req.query;
+  const { items: lineItems } = req.body || {};
+  // validate token
+  if (!token) {
+    return res.status(400).json({ error: "Token (t) required" });
+  }
+  // verify token (must be signed with JWT_TABLE_SECRET when generating QR)
+  let payload;
+  try {
+    payload = jwt.verify(token, JWT_TABLE_SECRET);
+  } catch (err) {
+    const message =
+      process.env.NODE_ENV === "development" && err?.message
+        ? `Invalid token: ${err.message}`
+        : "Invalid token";
+    return res.status(400).json({ error: message });
+  }
+  // parse token
   const {
-    merchant_id,
-    branch_id,
-    table_id,
-    order_type,
-    customer_name,
-    customer_phone,
-    notes,
-    items: lineItems,
-  } = req.body || {};
+    merchantId: tokenMerchantId,
+    branchId: tokenBranchId,
+    tableId: tokenTableId,
+  } = payload;
+
+  // validate request body
   if (
-    !merchant_id ||
-    !branch_id ||
-    !order_type ||
+    !tokenMerchantId ||
+    !tokenBranchId ||
+    !tokenTableId ||
     !Array.isArray(lineItems) ||
     lineItems.length === 0
   ) {
     return res.status(400).json({
-      error: "merchant_id, branch_id, order_type, and items required",
+      error: "tokenMerchantId, tokenBranchId, tokenTableId, and items required",
     });
   }
-  if (!ORDER_TYPES.includes(order_type))
-    return res.status(400).json({ error: "Invalid order_type" });
+  // validate branch
   const { data: branch } = await supabaseAdmin
     .from("branch")
     .select("merchant_id")
-    .eq("id", branch_id)
+    .eq("id", tokenBranchId)
     .single();
-  if (!branch || branch.merchant_id !== merchant_id) {
+  if (!branch || branch.merchant_id !== tokenMerchantId) {
     return res
       .status(400)
-      .json({ error: "branch_id must belong to the given merchant_id" });
+      .json({
+        error: "tokenBranchId must belong to the given tokenMerchantId",
+      });
   }
-  if (table_id) {
+  // validate table
+  if (tokenTableId) {
     const { data: tbl } = await supabaseAdmin
       .from("table")
       .select("branch_id")
-      .eq("id", table_id)
+      .eq("id", tokenTableId)
       .single();
-    if (!tbl || tbl.branch_id !== branch_id) {
+    if (!tbl || tbl.branch_id !== tokenBranchId) {
       return res
         .status(400)
-        .json({ error: "table_id must belong to the given branch" });
+        .json({ error: "tokenTableId must belong to the given tokenBranchId" });
     }
   }
-  const order_number = await getNextOrderNumber(branch_id);
+  // get next order number
+  const order_number = await getNextOrderNumber(tokenBranchId);
   let total_price = 0;
+  
   const orderRows = [];
   const modifierRows = [];
+  // validate items
   for (const line of lineItems) {
     const { item_id, variant_id, quantity, modifiers } = line;
     const rawQty = Number(quantity);
@@ -201,11 +223,12 @@ export async function create(req, res) {
         error: `Quantity must be between ${MIN_QUANTITY} and ${MAX_QUANTITY}`,
       });
     }
+    // validate item
     const { data: item } = await supabaseAdmin
       .from("item")
       .select("id, merchant_id, status, name_en")
       .eq("id", item_id)
-      .eq("merchant_id", merchant_id)
+      .eq("merchant_id", tokenMerchantId)
       .single();
     if (!item) {
       return res.status(400).json({ error: `Item ${item_id} not found` });
@@ -215,11 +238,13 @@ export async function create(req, res) {
         error: "Item is not available for ordering (hidden or out of stock)",
       });
     }
+    // validate modifiers
     const selectedModIds = (modifiers || [])
       .map((m) => m.modifier_id)
       .filter(Boolean);
+    // validate modifier rules
     const modRules = await validateModifierRules(
-      merchant_id,
+      tokenMerchantId,
       item_id,
       item.name_en,
       selectedModIds,
@@ -227,13 +252,14 @@ export async function create(req, res) {
     if (!modRules.valid) {
       return res.status(400).json({ error: modRules.error });
     }
+    // validate variant
     if (variant_id) {
       const { data: variant } = await supabaseAdmin
         .from("item_variant")
         .select("id, item_id, merchant_id")
         .eq("id", variant_id)
         .eq("item_id", item_id)
-        .eq("merchant_id", merchant_id)
+        .eq("merchant_id", tokenMerchantId)
         .single();
       if (!variant) {
         return res
@@ -241,22 +267,30 @@ export async function create(req, res) {
           .json({ error: `Variant ${variant_id} not found for item` });
       }
     }
-    const unit_price = await resolveUnitPrice(merchant_id, item_id, variant_id);
+    // resolve unit price
+    const unit_price = await resolveUnitPrice(
+      tokenMerchantId,
+      item_id,
+      variant_id,
+    );
+    // validate unit price
     if (unit_price < 0) {
       return res
         .status(400)
         .json({ error: "Invalid price: negative prices are not allowed" });
     }
-    const name_snapshot = await resolveItemName(merchant_id, item_id);
+    // resolve item name
+    const name_snapshot = await resolveItemName(tokenMerchantId, item_id);
     if (!name_snapshot || name_snapshot.trim() === "") {
-      return res
-        .status(400)
-        .json({
-          error: `Item ${item_id} not found or does not belong to this merchant`,
-        });
+      return res.status(400).json({
+        error: `Item ${item_id} not found or does not belong to this merchant`,
+      });
     }
+    // resolve price snapshot
     const price_snapshot = unit_price;
+    // resolve line total
     const line_total = unit_price * qty;
+    // add order row
     orderRows.push({
       item_id,
       variant_id: variant_id || null,
@@ -265,7 +299,9 @@ export async function create(req, res) {
       price_snapshot,
       total_price: line_total,
     });
+    // add to total price
     total_price += line_total;
+    // validate modifier quantity
     for (const mod of modifiers || []) {
       const modLineQty = Number(mod.quantity) || 1;
       if (
@@ -277,28 +313,31 @@ export async function create(req, res) {
           error: `Modifier quantity must be between ${MIN_QUANTITY} and ${MAX_QUANTITY}`,
         });
       }
+      // resolve modifier row
       const { data: modRow } = await supabaseAdmin
         .from("modifiers")
         .select("id, name_en, price")
         .eq("id", mod.modifier_id)
-        .eq("merchant_id", merchant_id)
+        .eq("merchant_id", tokenMerchantId)
         .single();
       if (!modRow) {
         return res.status(400).json({
           error: `Modifier ${mod.modifier_id} not found or does not belong to this merchant`,
         });
       }
+      // validate modifier price
       const name = modRow.name_en ?? "";
       const price = Number(modRow.price);
       if (price < 0) {
-        return res
-          .status(400)
-          .json({
-            error: "Invalid modifier price: negative prices are not allowed",
-          });
+        return res.status(400).json({
+          error: "Invalid modifier price: negative prices are not allowed",
+        });
       }
+      // resolve modifier quantity
       const modQty = Math.floor(modLineQty) * qty;
+      // add to total price
       total_price += price * modQty;
+      // add modifier row
       modifierRows.push({
         modifier_id: mod.modifier_id,
         name_snapshot: name,
@@ -308,22 +347,20 @@ export async function create(req, res) {
       });
     }
   }
+  // create order
   const { data: order, error: orderError } = await supabaseAdmin
     .from("order")
     .insert({
-      branch_id,
-      table_id: table_id || null,
+      branch_id: tokenBranchId,
+      table_id: tokenTableId || null,
       order_number,
       status: "placed",
-      order_type,
-      customer_name: customer_name || null,
-      customer_phone: customer_phone || null,
-      notes: notes || null,
       total_price,
     })
     .select()
     .single();
   if (orderError) return res.status(400).json({ error: orderError.message });
+  // create order items
   for (let i = 0; i < orderRows.length; i++) {
     const row = orderRows[i];
     const { data: oi, error: oiErr } = await supabaseAdmin
@@ -346,6 +383,7 @@ export async function create(req, res) {
         details: oiErr.message,
       });
     }
+    // create order item modifiers
     const forThisItem = modifierRows.filter((m) => m._order_item_index === i);
     for (const m of forThisItem) {
       const { error: modErr } = await supabaseAdmin
@@ -366,6 +404,18 @@ export async function create(req, res) {
       }
     }
   }
+  const io = req.app?.get("io");
+  if (io) {
+    io.emit("order:created", {
+      order_id: order.id,
+      order_number: order.order_number,
+      status: order.status,
+      total_price: order.total_price,
+      branch_id: tokenBranchId,
+      table_id: tokenTableId || null,
+    });
+  }
+  io.to(`branch:${tokenBranchId}`).emit("order:created", payload);
   res.status(201).json({
     order_id: order.id,
     order_number: order.order_number,

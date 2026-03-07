@@ -4,13 +4,14 @@ import {
   requireAuth,
   requireMerchant,
   requireCanEditMenu,
+  requireStaff
 } from "../middleware/auth.js";
 import * as itemsController from "../controllers/items.controller.js";
 
 const router = Router();
 router.use(requireAuth);
 router.use(requireMerchant);
-router.use(requireCanEditMenu);
+// router.use(requireCanEditMenu);
 
 router.post(
   "/categories/:categoryId/items",
@@ -18,9 +19,10 @@ router.post(
 );
 router.get(
   "/categories/:categoryId/items",
+  requireStaff,
   asyncHandler(itemsController.listByCategory),
 );
-router.get("/items/:itemId", asyncHandler(itemsController.getOne));
+router.get("/items/:itemId", requireStaff, asyncHandler(itemsController.getOne));
 router.patch("/items/:itemId", asyncHandler(itemsController.update));
 router.patch(
   "/items/:itemId/status",
