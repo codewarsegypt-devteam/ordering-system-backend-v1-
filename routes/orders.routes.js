@@ -18,6 +18,12 @@ router.get(
   asyncHandler(ordersController.list),
 );
 router.get(
+  "/export/excel",
+  requireAuth,
+  requireMerchant,
+  asyncHandler(ordersController.exportOrdersExcel),
+);
+router.get(
   "/:orderId",
   requireAuth,
   requireMerchant,

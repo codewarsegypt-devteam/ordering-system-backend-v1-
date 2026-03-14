@@ -1,5 +1,7 @@
 import { supabaseAdmin } from "../db_connection.js";
 import jwt from "jsonwebtoken";
+import * as XLSX from "xlsx";
+import dayjs from "dayjs";
 const JWT_TABLE_SECRET =
   process.env.JWT_TABLE_SECRET || process.env.JWT_SECRET || "dev-secret";
 const ORDER_STATUSES = [
@@ -637,6 +639,130 @@ export async function list(req, res) {
         ? enrichedData[enrichedData.length - 1]?.created_at
         : null,
   });
+}
+
+const MAX_EXPORT_ROWS = 5000;
+
+export async function exportOrdersExcel(req, res) {
+  const {
+    branch_id,
+    status,
+    from,
+    to,
+    q,
+    table_id,
+    table_number,
+    min_total,
+    max_total,
+    sort_by,
+    sort_dir,
+  } = req.query;
+
+  if (req.user.role === "cashier" || req.user.role === "kitchen") {
+    const scopeBranch = branch_id || req.user.branch_id;
+    if (!scopeBranch || String(scopeBranch) !== String(req.user.branch_id)) {
+      return res.status(403).json({ error: "Access limited to your branch" });
+    }
+  }
+
+  const branchIds = await getBranchIdsForMerchant(req.user.merchant_id);
+  if (!branchIds.length) {
+    return res.status(400).json({ error: "No branches found for merchant" });
+  }
+
+  let filteredTableIds = null;
+  if (table_number) {
+    let tablesQuery = supabaseAdmin
+      .from("table")
+      .select("id")
+      .eq("number", String(table_number).trim());
+    if (branch_id) {
+      tablesQuery = tablesQuery.eq("branch_id", branch_id);
+    } else if (
+      req.user.branch_id &&
+      (req.user.role === "cashier" || req.user.role === "kitchen")
+    ) {
+      tablesQuery = tablesQuery.eq("branch_id", req.user.branch_id);
+    } else {
+      tablesQuery = tablesQuery.in("branch_id", branchIds);
+    }
+    const { data: tables, error: tablesError } = await tablesQuery;
+    if (tablesError)
+      return res.status(500).json({ error: tablesError.message });
+    filteredTableIds = (tables || []).map((t) => t.id);
+    if (!filteredTableIds?.length) {
+      return res.status(400).json({ error: "No tables match table_number" });
+    }
+  }
+
+  let query = supabaseAdmin
+    .from("order")
+    .select("*")
+    .in("branch_id", branchIds)
+    .limit(MAX_EXPORT_ROWS);
+  if (branch_id) query = query.eq("branch_id", branch_id);
+  if (
+    req.user.branch_id &&
+    (req.user.role === "cashier" || req.user.role === "kitchen")
+  ) {
+    query = query.eq("branch_id", req.user.branch_id);
+  }
+  if (status) {
+    const statuses = status.split(",").map((s) => s.trim());
+    query = query.in("status", statuses);
+  }
+  if (table_id) query = query.eq("table_id", table_id);
+  if (filteredTableIds) query = query.in("table_id", filteredTableIds);
+  if (min_total !== undefined && min_total !== "")
+    query = query.gte("total_price", Number(min_total));
+  if (max_total !== undefined && max_total !== "")
+    query = query.lte("total_price", Number(max_total));
+  if (from) query = query.gte("created_at", from);
+  if (to) query = query.lte("created_at", to);
+  if (q) query = query.ilike("order_number", `%${q}%`);
+
+  const sortBy = normalizeSortBy(sort_by);
+  const sortDir = normalizeSortDir(sort_dir);
+  query = query
+    .order(sortBy, { ascending: sortDir === "asc" })
+    .order("created_at", { ascending: false });
+
+  const { data: orders, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+  const enriched = await enrichOrdersWithContext(orders || []);
+
+  const headers = [
+    "Order #",
+    "Date",
+    "Branch",
+    "Table",
+    "Status",
+    "Total",
+  ];
+  const rows = enriched.map((o) => [
+    o.order_number ?? "",
+    o.created_at ? dayjs(o.created_at).format("YYYY-MM-DD HH:mm") : "",
+    o.branch_name ?? "",
+    o.table_number ?? "",
+    o.status ?? "",
+    Number(o.total_price) ?? 0,
+  ]);
+  const sheetData = [headers, ...rows];
+  const ws = XLSX.utils.aoa_to_sheet(sheetData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Orders");
+  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+
+  const filename = `orders_${dayjs().format("YYYY-MM-DD_HH-mm")}.xlsx`;
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${filename}"`,
+  );
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  res.send(buf);
 }
 
 export async function getOne(req, res) {
