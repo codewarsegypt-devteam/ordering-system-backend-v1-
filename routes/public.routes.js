@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import * as publicController from "../controllers/public.controller.js";
-import * as menusController from "../controllers/menus.controller.js";
+import * as tableServicesController from "../controllers/tableServices.controller.js";
 const router = Router();
 
 router.get("/scan", asyncHandler(publicController.getScan));
@@ -13,4 +13,8 @@ router.get(
   asyncHandler(publicController.getTableQrcodeByTableId),
 );
 router.post("/create-order", asyncHandler(publicController.createOrder));
+router.post(
+  "/table-services",
+  asyncHandler(tableServicesController.createFromToken),
+);
 export default router;
