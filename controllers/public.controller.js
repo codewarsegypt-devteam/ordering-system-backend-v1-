@@ -25,7 +25,7 @@ export async function getTableQrcodeByTableId(req, res) {
  * يرجع: merchant_id, branch_id, table_id, menus (قائمة المنيهات بدون تفاصيل categories/items).
  */
 
-export async function getScan(req, res) {
+export async function   getScan(req, res) {
   const { t: token } = req.query;
   if (!token) {
     return res.status(400).json({
@@ -72,7 +72,7 @@ export async function getScan(req, res) {
   const [merchantRes, branchRes, menusRes] = await Promise.all([
     supabaseAdmin
       .from("merchant")
-      .select("name, logo")
+      .select("name, logo, hexa_color_1, hexa_color_2")
       .eq("id", merchantId)
       .single(),
     supabaseAdmin.from("branch").select("name").eq("id", branch_id).single(),
@@ -92,6 +92,8 @@ export async function getScan(req, res) {
     merchant_id: merchantId,
     merchant_name: merchant?.name ?? null,
     merchant_logo: merchant?.logo ?? null,
+    hexa_color_1: merchant?.hexa_color_1 ?? null,
+    hexa_color_2: merchant?.hexa_color_2 ?? null,
     branch_id,
     branch_name: branch?.name ?? null,
     table_id,

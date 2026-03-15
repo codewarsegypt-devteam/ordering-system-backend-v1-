@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "../db_connection.js";
 
-const ALLOWED_UPDATE = ["name", "logo", "has_color_1", "has_color_2", "status"];
+const ALLOWED_UPDATE = ["name", "logo", "hexa_color_1", "hexa_color_2", "status"];
 
 export async function create(req, res) {
   const { name, logo, hexa_color_1, hexa_color_2 } = req.body || {};
@@ -26,7 +26,7 @@ export async function list(req, res) {
 
 export async function update(req, res) {
   const { merchantId } = req.params;
-  if (merchantId !== req.user.merchant_id) {
+  if (String(merchantId) !== String(req.user.merchant_id)) {
     return res.status(403).json({ error: "Can only update your own merchant" });
   }
   const updates = pick(req.body || {}, ALLOWED_UPDATE);
