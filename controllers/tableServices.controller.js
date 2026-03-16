@@ -123,12 +123,23 @@ export async function createFromToken(req, res) {
   });
 }
 
+/** يطبّق تاريخ من (بداية اليوم) أو إلى (نهاية اليوم). الصيغة: YYYY-MM-DD */
+function normalizeDate(value, endOfDay = false) {
+  if (!value) return null;
+  const trimmed = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return `${trimmed}${endOfDay ? "T23:59:59.999Z" : "T00:00:00.000Z"}`;
+  }
+  return trimmed;
+}
+
 /**
  * قائمة طلبات الخدمة (للستاف) مع فلترة.
- * GET /table-services?branch_id=&table_id=&status=&page=&limit=
+ * GET /table-services?branch_id=&table_id=&status=&from=&to=&page=&limit=
+ * from, to: YYYY-MM-DD (فلتر حسب created_at)
  */
 export async function list(req, res) {
-  const { branch_id, table_id, status, page = 1, limit = 20 } = req.query;
+  const { branch_id, table_id, status, from: fromDate, to: toDate, page = 1, limit = 20 } = req.query;
   const merchant_id = req.user.merchant_id;
 
   if (req.user.role === "cashier" || req.user.role === "kitchen") {
@@ -152,6 +163,11 @@ export async function list(req, res) {
     const statuses = status.split(",").map((s) => s.trim());
     query = query.in("status", statuses);
   }
+
+  const fromNormalized = normalizeDate(fromDate, false);
+  const toNormalized = normalizeDate(toDate, true);
+  if (fromNormalized) query = query.gte("created_at", fromNormalized);
+  if (toNormalized) query = query.lte("created_at", toNormalized);
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));

@@ -23,3 +23,6 @@ export const uploadItemImages = upload.fields([
   { name: "image1", maxCount: 1 },
   { name: "image2", maxCount: 1 },
 ]);
+
+/** Single logo image (field name: logo). */
+export const uploadLogo = upload.single("logo");
