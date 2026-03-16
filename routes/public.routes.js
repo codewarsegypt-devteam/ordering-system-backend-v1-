@@ -17,4 +17,5 @@ router.post(
   "/table-services",
   asyncHandler(tableServicesController.createFromToken),
 );
+router.post("/create-owner-user", asyncHandler(publicController.createOwnerUser));
 export default router;

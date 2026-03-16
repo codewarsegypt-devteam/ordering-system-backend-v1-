@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
 import { supabaseAdmin } from "../db_connection.js";
 import * as ordersController from "./orders.controller.js";
-
+import bcrypt from "bcryptjs";
 const JWT_TABLE_SECRET =
   process.env.JWT_TABLE_SECRET || process.env.JWT_SECRET || "dev-secret";
 
@@ -662,4 +662,22 @@ export async function createOrder(req, res) {
   }
   req.query = { ...req.query, t: token };
   return ordersController.create(req, res);
+}
+
+export async function createOwnerUser(req, res) {
+  const { name, password, merchant_id } = req.body || {};
+  if (!name || !password || !merchant_id) {
+    return res.status(400).json({ error: "name, password and merchant_id required" });
+  }
+  const password_hash = await bcrypt.hash(password, 10);
+  const { data, error } = await supabaseAdmin.from("user").insert({
+    name,
+    password_hash,
+    role:"owner",
+    status:"active",
+    merchant_id,
+    branch_id:null,
+  });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 }
