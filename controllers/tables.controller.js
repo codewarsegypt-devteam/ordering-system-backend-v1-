@@ -74,7 +74,9 @@ export async function getQr(req, res) {
   // 3) لو مش موجود، اعمل واحد جديد مرة واحدة
   const baseUrl =
     process.env.MENU_FRONTEND_URL ||
-    "https://online-merchant-ordering-system-fro.vercel.app";
+    "https://ordering-system-frontend-v1.vercel.app";
+    // test url
+  // "https://online-merchant-ordering-system-fro.vercel.app";
   // "http://localhost:3000";
   // يفضل تحط tableCode + exp طويل
   const token = jwt.sign(
