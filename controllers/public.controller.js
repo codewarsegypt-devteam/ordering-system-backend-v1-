@@ -681,3 +681,74 @@ export async function createOwnerUser(req, res) {
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 }
+
+/**
+ * Public signup endpoint to create a new merchant + owner user.
+ * POST /public/signup
+ * Body: { username, merchant_name, password }
+ */
+export async function signupMerchantOwner(req, res) {
+  const { username, merchant_name, password } = req.body || {};
+
+  if (!username || !merchant_name || !password) {
+    return res.status(400).json({
+      error: "username, merchant_name and password are required",
+    });
+  }
+
+  // Ensure username is not already taken (global check)
+  const { data: existingUser, error: existingUserErr } = await supabaseAdmin
+    .from("user")
+    .select("id, merchant_id")
+    .eq("name", username)
+    .maybeSingle();
+
+  if (existingUserErr) {
+    return res.status(500).json({ error: existingUserErr.message });
+  }
+  if (existingUser) {
+    return res.status(400).json({ error: "Username already exists" });
+  }
+
+  // Create merchant
+  const { data: merchant, error: merchantErr } = await supabaseAdmin
+    .from("merchant")
+    .insert({
+      name: merchant_name,
+    })
+    .select()
+    .single();
+
+  if (merchantErr || !merchant) {
+    return res.status(500).json({
+      error: merchantErr?.message || "Failed to create merchant",
+    });
+  }
+
+  const password_hash = await bcrypt.hash(password, 10);
+
+  const { data: user, error: userErr } = await supabaseAdmin
+    .from("user")
+    .insert({
+      name: username,
+      password_hash,
+      role: "owner",
+      status: "active",
+      merchant_id: merchant.id,
+      branch_id: null,
+    })
+    .select()
+    .single();
+
+  if (userErr || !user) {
+    return res.status(500).json({
+      error: userErr?.message || "Failed to create user",
+    });
+  }
+
+  return res.status(201).json({
+    merchant,
+    user,
+  });
+}
+

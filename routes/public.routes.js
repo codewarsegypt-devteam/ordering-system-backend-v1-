@@ -17,5 +17,11 @@ router.post(
   "/table-services",
   asyncHandler(tableServicesController.createFromToken),
 );
+
+// Public signup: create merchant + owner user
+router.post("/signup", asyncHandler(publicController.signupMerchantOwner));
+
+// Legacy: create owner user for existing merchant_id
 router.post("/create-owner-user", asyncHandler(publicController.createOwnerUser));
+
 export default router;
