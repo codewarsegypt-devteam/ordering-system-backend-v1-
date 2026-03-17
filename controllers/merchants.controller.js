@@ -2,7 +2,7 @@ import { supabaseAdmin } from "../db_connection.js";
 import { uploadToR2, getKeyFromUrl, deleteFromR2 } from "../lib/r2Upload.js";
 import { v4 as uuidv4 } from "uuid";
 
-const ALLOWED_UPDATE = ["name", "logo", "hexa_color_1", "hexa_color_2", "status"];
+const ALLOWED_UPDATE = ["name", "logo", "hexa_color_1", "hexa_color_2", "status", "base_currency_id"];
 
 function getExtension(mimetype) {
   const map = {

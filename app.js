@@ -22,6 +22,7 @@ import {
   cashierRoutes,
   statsRoutes,
   tableServicesRoutes,
+  currenciesRoutes,
 } from "./routes/index.js";
 
 const app = express();
@@ -67,6 +68,7 @@ app.use("/kitchen", kitchenRoutes);
 app.use("/cashier", cashierRoutes);
 app.use("/stats", statsRoutes);
 app.use("/table-services", tableServicesRoutes);
+app.use("/currencies", currenciesRoutes);
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 

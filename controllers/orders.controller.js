@@ -2,6 +2,7 @@ import { supabaseAdmin } from "../db_connection.js";
 import jwt from "jsonwebtoken";
 import * as XLSX from "xlsx";
 import dayjs from "dayjs";
+import { resolveDisplayCurrency, convertToDisplay } from "../lib/currency.js";
 const JWT_TABLE_SECRET =
   process.env.JWT_TABLE_SECRET || process.env.JWT_SECRET || "dev-secret";
 const ORDER_STATUSES = [
@@ -218,7 +219,8 @@ async function rollbackOrder(orderId) {
 
 export async function create(req, res) {
   const { t: token } = req.query;
-  const { items: lineItems } = req.body || {};
+  // display_currency_id: the currency_id the customer had selected at checkout
+  const { items: lineItems, display_currency_id } = req.body || {};
   // validate token
   if (!token) {
     return res.status(400).json({ error: "Token (t) required" });
@@ -277,6 +279,11 @@ export async function create(req, res) {
         .json({ error: "tokenTableId must belong to the given tokenBranchId" });
     }
   }
+  // Resolve display currency once — used for all display snapshot calculations.
+  // Falls back safely to base currency if selectedCurrencyId is missing/invalid.
+  const { currency: displayCurrency, rate_from_base: displayRate } =
+    await resolveDisplayCurrency(tokenMerchantId, display_currency_id);
+
   // get next order number
   const order_number = await getNextOrderNumber(tokenBranchId);
   let total_price = 0;
@@ -366,16 +373,18 @@ export async function create(req, res) {
     }
     // resolve price snapshot
     const price_snapshot = unit_price;
-    // resolve line total
+    // resolve line total (base currency)
     const line_total = unit_price * qty;
-    // add order row
+    // add order row — includes display snapshots for what the customer saw
     orderRows.push({
       item_id,
       variant_id: variant_id || null,
       quantity: qty,
       name_snapshot,
-      price_snapshot,
-      total_price: line_total,
+      price_snapshot,                                              // base unit price
+      total_price: line_total,                                     // base line total
+      display_price_snapshot: convertToDisplay(unit_price, displayRate), // display unit price
+      display_total_price: convertToDisplay(line_total, displayRate),    // display line total
     });
     // add to total price
     total_price += line_total;
@@ -425,7 +434,7 @@ export async function create(req, res) {
       });
     }
   }
-  // create order
+  // create order — total_price is in base currency; display_* fields are snapshots of what the customer saw
   const { data: order, error: orderError } = await supabaseAdmin
     .from("order")
     .insert({
@@ -434,6 +443,9 @@ export async function create(req, res) {
       order_number,
       status: "placed",
       total_price,
+      display_total_price: convertToDisplay(total_price, displayRate),
+      display_currency_id: displayCurrency?.id ?? null,
+      display_exchange_rate: displayRate,
     })
     .select()
     .single();
@@ -449,8 +461,10 @@ export async function create(req, res) {
         variant_id: row.variant_id,
         quantity: row.quantity,
         name_snapshot: row.name_snapshot,
-        price_snapshot: row.price_snapshot,
-        total_price: row.total_price,
+        price_snapshot: row.price_snapshot,                        // base unit price snapshot
+        total_price: row.total_price,                              // base line total
+        display_price_snapshot: row.display_price_snapshot,        // display unit price snapshot
+        display_total_price: row.display_total_price,              // display line total
       })
       .select()
       .single();
@@ -482,23 +496,27 @@ export async function create(req, res) {
       }
     }
   }
+  const orderEvent = {
+    order_id: order.id,
+    order_number: order.order_number,
+    status: order.status,
+    total_price: order.total_price,
+    branch_id: tokenBranchId,
+    table_id: tokenTableId || null,
+  };
   const io = req.app?.get("io");
   if (io) {
-    io.emit("order:created", {
-      order_id: order.id,
-      order_number: order.order_number,
-      status: order.status,
-      total_price: order.total_price,
-      branch_id: tokenBranchId,
-      table_id: tokenTableId || null,
-    });
+    io.emit("order:created", orderEvent);
+    io.to(`branch:${tokenBranchId}`).emit("order:created", orderEvent);
   }
-  io.to(`branch:${tokenBranchId}`).emit("order:created", payload);
   res.status(201).json({
     order_id: order.id,
     order_number: order.order_number,
     status: order.status,
     total_price: order.total_price,
+    display_total_price: order.display_total_price,
+    display_currency_id: order.display_currency_id,
+    display_exchange_rate: order.display_exchange_rate,
   });
 }
 

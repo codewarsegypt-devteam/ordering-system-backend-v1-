@@ -2,6 +2,12 @@ import jwt from "jsonwebtoken";
 import { supabaseAdmin } from "../db_connection.js";
 import * as ordersController from "./orders.controller.js";
 import bcrypt from "bcryptjs";
+import {
+  getMerchantBaseCurrency,
+  getMerchantDisplayCurrencies,
+  resolveDisplayCurrency,
+  convertToDisplay,
+} from "../lib/currency.js";
 const JWT_TABLE_SECRET =
   process.env.JWT_TABLE_SECRET || process.env.JWT_SECRET || "dev-secret";
 
@@ -69,7 +75,7 @@ export async function   getScan(req, res) {
   const branch_id = tbl.branch_id;
   const table_id = tbl.id;
 
-  const [merchantRes, branchRes, menusRes] = await Promise.all([
+  const [merchantRes, branchRes, menusRes, baseCurrency, displayCurrencies] = await Promise.all([
     supabaseAdmin
       .from("merchant")
       .select("name, logo, hexa_color_1, hexa_color_2")
@@ -82,11 +88,17 @@ export async function   getScan(req, res) {
       .eq("merchant_id", merchantId)
       .eq("is_active", true)
       .order("created_at", { ascending: true }),
+    getMerchantBaseCurrency(merchantId),
+    getMerchantDisplayCurrencies(merchantId),
   ]);
 
   const { data: merchant } = merchantRes;
   const { data: branch } = branchRes;
   const { data: menus } = menusRes;
+
+  const defaultDisplay = displayCurrencies.find((c) => c.is_default_display);
+  const defaultDisplayCurrency = defaultDisplay?.currency ?? baseCurrency ?? null;
+  const defaultDisplayRate = defaultDisplay?.rate_from_base ?? 1;
 
   res.json({
     merchant_id: merchantId,
@@ -99,6 +111,17 @@ export async function   getScan(req, res) {
     table_id,
     table_name: tbl.number != null ? String(tbl.number) : null,
     menus: menus || [],
+    currency_info: {
+      base_currency: baseCurrency ?? null,
+      default_display_currency: defaultDisplayCurrency,
+      default_display_rate: defaultDisplayRate,
+      available_currencies: displayCurrencies.map((c) => ({
+        currency_id: c.currency_id,
+        rate_from_base: c.rate_from_base,
+        is_default_display: c.is_default_display,
+        currency: c.currency,
+      })),
+    },
   });
 }
 
@@ -255,11 +278,19 @@ export async function getMenu(req, res) {
 
 /**
  * Get a single menu by id with full details (categories, items, variants, modifier_groups).
- * GET /public/menu/:menuId?t=TOKEN — التوكين مطلوب للأمان (من مسح الـ QR).
+ * GET /public/menu/:menuId?t=TOKEN&currency_id=OPTIONAL
+ *
+ * Query params:
+ *   t           — QR JWT token (required)
+ *   currency_id — display currency the customer selected (optional, falls back to merchant default)
+ *
+ * Each item/variant/modifier in the response includes both:
+ *   base_price    — real price in merchant base currency
+ *   display_price — converted price in the resolved display currency
  */
 export async function getMenuById(req, res) {
   const { menuId } = req.params;
-  const { t: token } = req.query;
+  const { t: token, currency_id: selectedCurrencyId } = req.query;
 
   if (!token) {
     return res
@@ -283,10 +314,12 @@ export async function getMenuById(req, res) {
   }
 
   try {
-    // نجيب table و menu مع بعض بدل sequential
+    // Fetch table, menu, and currency data in parallel
     const [
       { data: tbl, error: tableErr },
       { data: menu, error: menuErr },
+      baseCurrency,
+      displayCurrencies,
     ] = await Promise.all([
       supabaseAdmin
         .from("table")
@@ -295,36 +328,46 @@ export async function getMenuById(req, res) {
         .eq("merchant_id", tokenMerchantId)
         .eq("is_active", true)
         .maybeSingle(),
-
       supabaseAdmin
         .from("menue")
         .select("*")
         .eq("id", menuId)
         .eq("is_active", true)
         .maybeSingle(),
+      getMerchantBaseCurrency(tokenMerchantId),
+      getMerchantDisplayCurrencies(tokenMerchantId),
     ]);
 
-    if (tableErr) {
-      return res.status(500).json({ error: tableErr.message });
-    }
-
+    if (tableErr) return res.status(500).json({ error: tableErr.message });
     if (!tbl) {
       return res.status(401).json({
         error: "Table not found or inactive. Please use a valid table QR.",
       });
     }
-
-    if (menuErr || !menu) {
-      return res.status(404).json({ error: "Menu not found" });
-    }
-
+    if (menuErr || !menu) return res.status(404).json({ error: "Menu not found" });
     if (menu.merchant_id !== tokenMerchantId) {
-      return res
-        .status(403)
-        .json({ error: "You do not have access to this menu." });
+      return res.status(403).json({ error: "You do not have access to this menu." });
     }
 
-    // categories
+    // Resolve the display currency and rate for this request
+    const { currency: displayCurrency, rate_from_base: displayRate } =
+      await resolveDisplayCurrency(tokenMerchantId, selectedCurrencyId);
+
+    // Build currency_info block that the frontend needs to show the currency selector
+    const defaultDisplay = displayCurrencies.find((c) => c.is_default_display);
+    const currencyInfo = {
+      base_currency: baseCurrency ?? null,
+      display_currency: displayCurrency ?? baseCurrency ?? null,
+      display_rate: displayRate,
+      default_display_currency: defaultDisplay?.currency ?? baseCurrency ?? null,
+      available_currencies: displayCurrencies.map((c) => ({
+        currency_id: c.currency_id,
+        rate_from_base: c.rate_from_base,
+        is_default_display: c.is_default_display,
+        currency: c.currency,
+      })),
+    };
+
     const { data: categories, error: categoriesErr } = await supabaseAdmin
       .from("category")
       .select("*")
@@ -332,77 +375,44 @@ export async function getMenuById(req, res) {
       .eq("is_active", true)
       .order("sort_order");
 
-    if (categoriesErr) {
-      return res.status(500).json({ error: categoriesErr.message });
-    }
+    if (categoriesErr) return res.status(500).json({ error: categoriesErr.message });
 
-    const result = {
-      menu,
-      categories: [],
-    };
+    const result = { menu, currency_info: currencyInfo, categories: [] };
 
-    if (!categories?.length) {
-      return res.json(result);
-    }
+    if (!categories?.length) return res.json(result);
 
     const categoryIds = categories.map((c) => c.id);
 
-    // هات كل items مرة واحدة
     const { data: items, error: itemsErr } = await supabaseAdmin
       .from("item")
       .select("*")
       .in("category_id", categoryIds)
       .eq("status", "active");
 
-    if (itemsErr) {
-      return res.status(500).json({ error: itemsErr.message });
-    }
+    if (itemsErr) return res.status(500).json({ error: itemsErr.message });
 
     const safeItems = items || [];
     const itemIds = safeItems.map((i) => i.id);
 
-    // لو مفيش items رجّع categories فاضية
     if (!itemIds.length) {
-      result.categories = categories.map((cat) => ({
-        ...cat,
-        items: [],
-      }));
+      result.categories = categories.map((cat) => ({ ...cat, items: [] }));
       return res.json(result);
     }
 
-    // fetch bulk data in parallel
+    // Bulk-fetch all relational data in parallel
     const [
       { data: imagesRows, error: imagesErr },
       { data: variantsRows, error: variantsErr },
       { data: itemModifierLinks, error: linksErr },
     ] = await Promise.all([
-      supabaseAdmin
-        .from("item_images")
-        .select("item_id, img_url_1, img_url_2")
-        .in("item_id", itemIds),
-
-      supabaseAdmin
-        .from("item_variant")
-        .select("*")
-        .in("item_id", itemIds),
-
-      supabaseAdmin
-        .from("item_modifier_group")
-        .select("*")
-        .in("item_id", itemIds),
+      supabaseAdmin.from("item_images").select("item_id, img_url_1, img_url_2").in("item_id", itemIds),
+      supabaseAdmin.from("item_variant").select("*").in("item_id", itemIds),
+      supabaseAdmin.from("item_modifier_group").select("*").in("item_id", itemIds),
     ]);
 
-    if (imagesErr) {
-      return res.status(500).json({ error: imagesErr.message });
-    }
-
-    if (variantsErr) {
-      return res.status(500).json({ error: variantsErr.message });
-    }
-
-    if (linksErr) {
-      return res.status(500).json({ error: linksErr.message });
-    }
+    if (imagesErr) return res.status(500).json({ error: imagesErr.message });
+    if (variantsErr) return res.status(500).json({ error: variantsErr.message });
+    if (linksErr) return res.status(500).json({ error: linksErr.message });
 
     const safeLinks = itemModifierLinks || [];
     const groupIds = [...new Set(safeLinks.map((r) => r.modifier_group_id).filter(Boolean))];
@@ -415,33 +425,16 @@ export async function getMenuById(req, res) {
         { data: groupsData, error: groupsErr },
         { data: modifiersData, error: modifiersErr },
       ] = await Promise.all([
-        supabaseAdmin
-          .from("modifier_group")
-          .select("*")
-          .in("id", groupIds),
-
-        supabaseAdmin
-          .from("modifiers")
-          .select("*")
-          .in("modifier_group_id", groupIds),
+        supabaseAdmin.from("modifier_group").select("*").in("id", groupIds),
+        supabaseAdmin.from("modifiers").select("*").in("modifier_group_id", groupIds),
       ]);
-
-      if (groupsErr) {
-        return res.status(500).json({ error: groupsErr.message });
-      }
-
-      if (modifiersErr) {
-        return res.status(500).json({ error: modifiersErr.message });
-      }
-
+      if (groupsErr) return res.status(500).json({ error: groupsErr.message });
+      if (modifiersErr) return res.status(500).json({ error: modifiersErr.message });
       modifierGroupsRows = groupsData || [];
       modifiersRows = modifiersData || [];
     }
 
-    // -----------------------------
-    // Build maps
-    // -----------------------------
-
+    // Build lookup maps
     const imagesByItemId = {};
     for (const row of imagesRows || []) {
       imagesByItemId[row.item_id] = {
@@ -463,9 +456,7 @@ export async function getMenuById(req, res) {
     }
 
     const groupById = {};
-    for (const row of modifierGroupsRows) {
-      groupById[row.id] = row;
-    }
+    for (const row of modifierGroupsRows) groupById[row.id] = row;
 
     const modifiersByGroupId = {};
     for (const row of modifiersRows) {
@@ -475,33 +466,40 @@ export async function getMenuById(req, res) {
       modifiersByGroupId[row.modifier_group_id].push(row);
     }
 
+    // Assemble items with display prices
     const itemsByCategoryId = {};
     for (const item of safeItems) {
       const itemLinks = linksByItemId[item.id] || [];
+      const basePrice = Number(item.base_price);
 
       const modifier_groups = itemLinks.map((rule) => ({
         group: groupById[rule.modifier_group_id] || {},
-        rule: {
-          min_select: rule.min_select,
-          max_select: rule.max_select,
-        },
-        modifiers: modifiersByGroupId[rule.modifier_group_id] || [],
+        rule: { min_select: rule.min_select, max_select: rule.max_select },
+        // Each modifier gets a display_price calculated from its base price
+        modifiers: (modifiersByGroupId[rule.modifier_group_id] || []).map((m) => ({
+          ...m,
+          display_price: convertToDisplay(m.price, displayRate),
+        })),
       }));
 
       const itemWithDetails = {
         ...item,
-        images: imagesByItemId[item.id] ?? {
-          img_url_1: null,
-          img_url_2: null,
-        },
-        variants: variantsByItemId[item.id] || [],
+        base_price: basePrice,
+        display_price: convertToDisplay(basePrice, displayRate),
+        base_currency: baseCurrency ?? null,
+        display_currency: displayCurrency ?? baseCurrency ?? null,
+        images: imagesByItemId[item.id] ?? { img_url_1: null, img_url_2: null },
+        // Each variant also gets a display_price
+        variants: (variantsByItemId[item.id] || []).map((v) => ({
+          ...v,
+          display_price: convertToDisplay(v.price, displayRate),
+        })),
         modifier_groups,
       };
 
       if (!itemsByCategoryId[item.category_id]) {
         itemsByCategoryId[item.category_id] = [];
       }
-
       itemsByCategoryId[item.category_id].push(itemWithDetails);
     }
 
@@ -518,7 +516,7 @@ export async function getMenuById(req, res) {
 }
 
 export async function validateCart(req, res) {
-  const { merchant_id, branch_id, table_id, items } = req.body || {};
+  const { merchant_id, branch_id, table_id, items, currency_id } = req.body || {};
   if (
     !merchant_id ||
     !branch_id ||
@@ -539,9 +537,15 @@ export async function validateCart(req, res) {
       .status(400)
       .json({ error: "branch_id must belong to the given merchant_id" });
   }
+
+  // Resolve display currency once for the whole cart
+  const { currency: displayCurrency, rate_from_base: displayRate } =
+    await resolveDisplayCurrency(merchant_id, currency_id);
+
   const errors = [];
   const line_items = [];
   let subtotal = 0;
+  let display_subtotal = 0;
   for (const line of items) {
     const { item_id, variant_id, quantity, modifiers } = line;
     const q = Number(quantity);
@@ -632,19 +636,33 @@ export async function validateCart(req, res) {
     }
     if (hasModError) continue;
     subtotal += line_total;
+    const display_unit_price = convertToDisplay(unit_price, displayRate);
+    const display_line_total = convertToDisplay(line_total, displayRate);
+    display_subtotal += display_line_total;
     line_items.push({
       item_id,
       variant_id: variant_id || null,
       unit_price,
       qty: quantityValid,
       line_total,
+      display_unit_price,
+      display_line_total,
     });
   }
   const is_valid = errors.length === 0;
   res.json({
     is_valid,
     errors,
-    totals: { subtotal, total: subtotal },
+    totals: {
+      subtotal,
+      total: subtotal,
+      display_subtotal,
+      display_total: display_subtotal,
+    },
+    currency_info: {
+      display_currency: displayCurrency ?? null,
+      display_rate: displayRate,
+    },
     line_items,
   });
 }

@@ -1,0 +1,284 @@
+{
+  "info": {
+    "name": "Multi-Currency Display — New & Updated Endpoints",
+    "description": "All new currency management endpoints and updated public endpoints (scan, menu, cart, order). Import this alongside the main collection. Set the `token` variable after login.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl",    "value": "http://localhost:3001" },
+    { "key": "token",      "value": "" },
+    { "key": "merchantId", "value": "" },
+    { "key": "menuId",     "value": "" },
+    { "key": "mcId",       "value": "", "description": "merchant_currencies row id" },
+    { "key": "currencyId", "value": "" },
+    { "key": "qrToken",    "value": "", "description": "JWT from QR scan (?t=...)" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+
+    {
+      "name": "🔐 Auth (get token first)",
+      "item": [
+        {
+          "name": "POST Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": "var json = pm.response.json();\nif (json.access_token) {\n  pm.collectionVariables.set('token', json.access_token);\n  console.log('Token saved.');\n}",
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"your_username\",\n  \"password\": \"your_password\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/login",
+            "description": "Login and auto-save token to `{{token}}` collection variable."
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "🌍 Currencies — Global",
+      "item": [
+        {
+          "name": "GET List All Global Currencies",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{baseUrl}}/currencies",
+            "description": "List every currency in the system (active and inactive). No auth required. Frontend uses this to populate a currency selection dropdown.\n\n**Response 200:**\n```json\n[\n  { \"id\": 1, \"code\": \"EGP\", \"name\": \"Egyptian Pound\", \"symbol\": \"ج.م\", \"is_active\": true },\n  { \"id\": 2, \"code\": \"USD\", \"name\": \"US Dollar\", \"symbol\": \"$\", \"is_active\": true },\n  { \"id\": 3, \"code\": \"EUR\", \"name\": \"Euro\", \"symbol\": \"€\", \"is_active\": true }\n]\n```"
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "🏪 Currencies — Merchant Admin",
+      "item": [
+        {
+          "name": "GET Merchant Currency Setup",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/currencies/merchant",
+            "description": "Returns the full currency configuration for the authenticated merchant: base currency and all configured display currencies with their rates.\n\n**Auth:** Bearer (owner)\n\n**Response 200:**\n```json\n{\n  \"base_currency_id\": 1,\n  \"base_currency\": { \"id\": 1, \"code\": \"EGP\", \"name\": \"Egyptian Pound\", \"symbol\": \"ج.م\", \"is_active\": true },\n  \"display_currencies\": [\n    {\n      \"id\": 10,\n      \"currency_id\": 2,\n      \"rate_from_base\": 0.021,\n      \"is_active\": true,\n      \"is_default_display\": true,\n      \"created_at\": \"2025-01-01T00:00:00Z\",\n      \"currency\": { \"id\": 2, \"code\": \"USD\", \"name\": \"US Dollar\", \"symbol\": \"$\", \"is_active\": true }\n    }\n  ]\n}\n```\n\n**Response 500:** `{ \"error\": \"...\" }`"
+          }
+        },
+
+        {
+          "name": "PATCH Set Base Currency",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency_id\": 1\n}"
+            },
+            "url": "{{baseUrl}}/currencies/merchant/base",
+            "description": "Set the merchant's base currency (source of truth for all prices). All item prices in the DB are assumed to be in this currency.\n\n**Auth:** Bearer (owner)\n\n**Body:**\n```json\n{ \"currency_id\": 1 }\n```\n- `currency_id` (int, required) — must exist in the currencies table and be active\n\n**Response 200:**\n```json\n{\n  \"merchant_id\": 5,\n  \"base_currency_id\": 1,\n  \"base_currency\": { \"id\": 1, \"code\": \"EGP\", \"name\": \"Egyptian Pound\", \"symbol\": \"ج.م\" }\n}\n```\n\n**Response 400:** `{ \"error\": \"currency_id is required\" }` or `{ \"error\": \"Currency not found or inactive\" }`"
+          }
+        },
+
+        {
+          "name": "POST Add Display Currency",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency_id\": 2,\n  \"rate_from_base\": 0.021,\n  \"is_default_display\": true\n}"
+            },
+            "url": "{{baseUrl}}/currencies/merchant/display",
+            "description": "Add a display currency for the merchant with an exchange rate from the base currency.\n\n**Auth:** Bearer (owner)\n\n**Body:**\n```json\n{\n  \"currency_id\": 2,\n  \"rate_from_base\": 0.021,\n  \"is_default_display\": true\n}\n```\n- `currency_id` (int, required) — must exist in currencies table and be active\n- `rate_from_base` (number, required) — how many display currency units equal 1 base unit. Must be > 0. Example: if base=EGP and display=USD, rate = 0.021 (1 EGP = 0.021 USD)\n- `is_default_display` (bool, optional, default false) — if true, this becomes the customer's default currency. Automatically clears any previous default.\n\n**Response 201:**\n```json\n{\n  \"id\": 10,\n  \"merchant_id\": 5,\n  \"currency_id\": 2,\n  \"rate_from_base\": 0.021,\n  \"is_active\": true,\n  \"is_default_display\": true,\n  \"currency\": { \"id\": 2, \"code\": \"USD\", \"name\": \"US Dollar\", \"symbol\": \"$\" }\n}\n```\n\n**Response 400:** `{ \"error\": \"currency_id and rate_from_base are required\" }`\n**Response 400:** `{ \"error\": \"rate_from_base must be a positive number\" }`\n**Response 400:** `{ \"error\": \"Currency not found or inactive\" }`\n**Response 400:** `{ \"error\": \"This currency is already configured for this merchant. Use PATCH to update it.\" }`"
+          }
+        },
+
+        {
+          "name": "PATCH Update Display Currency",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rate_from_base\": 0.0215,\n  \"is_active\": true,\n  \"is_default_display\": false\n}"
+            },
+            "url": "{{baseUrl}}/currencies/merchant/display/{{mcId}}",
+            "description": "Update an existing merchant display currency entry. Only send the fields you want to change.\n\n**Auth:** Bearer (owner)\n\n**Path param:** `mcId` — the `id` from the `merchant_currencies` table (not currency_id)\n\n**Body (all optional):**\n```json\n{\n  \"rate_from_base\": 0.0215,\n  \"is_active\": true,\n  \"is_default_display\": false\n}\n```\n- `rate_from_base` — positive number, new exchange rate\n- `is_active` — boolean, set false to temporarily disable this display currency without deleting it\n- `is_default_display` — boolean, set true to make this the customer default (auto-clears previous default)\n\n**Response 200:** updated `merchant_currencies` row\n\n**Response 400:** `{ \"error\": \"rate_from_base must be a positive number\" }`\n**Response 400:** `{ \"error\": \"No valid fields to update\" }`\n**Response 404:** `{ \"error\": \"Merchant currency entry not found\" }`"
+          }
+        },
+
+        {
+          "name": "DELETE Remove Display Currency",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/currencies/merchant/display/{{mcId}}",
+            "description": "Permanently remove a display currency from the merchant's configuration.\n\n**Auth:** Bearer (owner)\n\n**Path param:** `mcId` — the `id` from the `merchant_currencies` table\n\n**Response 200:** `{ \"success\": true, \"deleted_id\": 10 }`\n\n**Response 404:** `{ \"error\": \"Merchant currency entry not found\" }`"
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "📱 Public — Updated Endpoints",
+      "item": [
+        {
+          "name": "GET Scan QR (with currency_info)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/public/scan?t={{qrToken}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["public", "scan"],
+              "query": [
+                { "key": "t", "value": "{{qrToken}}", "description": "JWT token from scanned QR code" }
+              ]
+            },
+            "description": "First call after scanning a QR code. Now returns a `currency_info` block so the frontend can set up the currency selector before loading the menu.\n\n**Query:** `t` (JWT token, required)\n\n**Response 200:**\n```json\n{\n  \"merchant_id\": 5,\n  \"merchant_name\": \"My Restaurant\",\n  \"merchant_logo\": \"https://...\",\n  \"hexa_color_1\": \"#FF5733\",\n  \"hexa_color_2\": \"#C70039\",\n  \"branch_id\": 3,\n  \"branch_name\": \"Downtown\",\n  \"table_id\": 7,\n  \"table_name\": \"12\",\n  \"menus\": [ { \"id\": 1, \"name_ar\": \"القائمة\", \"name_en\": \"Menu\", ... } ],\n  \"currency_info\": {\n    \"base_currency\": { \"id\": 1, \"code\": \"EGP\", \"symbol\": \"ج.م\", \"name\": \"Egyptian Pound\" },\n    \"default_display_currency\": { \"id\": 2, \"code\": \"USD\", \"symbol\": \"$\", \"name\": \"US Dollar\" },\n    \"default_display_rate\": 0.021,\n    \"available_currencies\": [\n      {\n        \"currency_id\": 2,\n        \"rate_from_base\": 0.021,\n        \"is_default_display\": true,\n        \"currency\": { \"id\": 2, \"code\": \"USD\", \"symbol\": \"$\", \"name\": \"US Dollar\" }\n      },\n      {\n        \"currency_id\": 3,\n        \"rate_from_base\": 0.019,\n        \"is_default_display\": false,\n        \"currency\": { \"id\": 3, \"code\": \"EUR\", \"symbol\": \"€\", \"name\": \"Euro\" }\n      }\n    ]\n  }\n}\n```"
+          }
+        },
+
+        {
+          "name": "GET Menu By ID (with display prices)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/public/menu/{{menuId}}?t={{qrToken}}&currency_id=",
+              "host": ["{{baseUrl}}"],
+              "path": ["public", "menu", "{{menuId}}"],
+              "query": [
+                { "key": "t",           "value": "{{qrToken}}", "description": "JWT token (required)" },
+                { "key": "currency_id", "value": "",            "description": "Optional. Display currency ID (from currency_info.available_currencies). Omit to use merchant default." }
+              ]
+            },
+            "description": "Full menu with categories, items, variants and modifier groups. Each price field now has both a `base_price` (real DB value) and a `display_price` (converted). A `currency_info` block is always included.\n\n**Query params:**\n- `t` (JWT, required)\n- `currency_id` (int, optional) — the display currency the customer selected. Falls back to merchant default if omitted or invalid.\n\n**Response 200:**\n```json\n{\n  \"menu\": { \"id\": 1, \"name_ar\": \"...\", \"name_en\": \"...\" },\n  \"currency_info\": {\n    \"base_currency\":         { \"id\": 1, \"code\": \"EGP\", \"symbol\": \"ج.م\" },\n    \"display_currency\":      { \"id\": 2, \"code\": \"USD\", \"symbol\": \"$\" },\n    \"display_rate\":          0.021,\n    \"default_display_currency\": { \"id\": 2, \"code\": \"USD\", \"symbol\": \"$\" },\n    \"available_currencies\": [ ... ]\n  },\n  \"categories\": [\n    {\n      \"id\": 10, \"name_en\": \"Burgers\",\n      \"items\": [\n        {\n          \"id\": 100,\n          \"name_en\": \"Classic Burger\",\n          \"base_price\": 150,\n          \"display_price\": 3.15,\n          \"base_currency\":    { \"id\": 1, \"code\": \"EGP\", \"symbol\": \"ج.م\" },\n          \"display_currency\": { \"id\": 2, \"code\": \"USD\", \"symbol\": \"$\" },\n          \"images\": { \"img_url_1\": \"https://...\", \"img_url_2\": null },\n          \"variants\": [\n            { \"id\": 201, \"name\": \"Large\", \"price\": 180, \"display_price\": 3.78 }\n          ],\n          \"modifier_groups\": [\n            {\n              \"group\": { \"id\": 50, \"name_en\": \"Extras\" },\n              \"rule\": { \"min_select\": 0, \"max_select\": 3 },\n              \"modifiers\": [\n                { \"id\": 301, \"name_en\": \"Extra Cheese\", \"price\": 20, \"display_price\": 0.42 }\n              ]\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}\n```"
+          }
+        },
+
+        {
+          "name": "POST Validate Cart (with display prices)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_id\": 5,\n  \"branch_id\": 3,\n  \"table_id\": 7,\n  \"currency_id\": 2,\n  \"items\": [\n    {\n      \"item_id\": 100,\n      \"variant_id\": null,\n      \"quantity\": 2,\n      \"modifiers\": [\n        { \"modifier_id\": 301, \"quantity\": 1 }\n      ]\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/public/cart/validate",
+            "description": "Validate a cart before checkout. Now accepts `currency_id` and returns display prices alongside base prices.\n\n**Body:**\n```json\n{\n  \"merchant_id\": 5,\n  \"branch_id\": 3,\n  \"table_id\": 7,\n  \"currency_id\": 2,\n  \"items\": [\n    { \"item_id\": 100, \"variant_id\": null, \"quantity\": 2, \"modifiers\": [{ \"modifier_id\": 301, \"quantity\": 1 }] }\n  ]\n}\n```\n- `currency_id` (int, optional) — the display currency. Falls back to merchant default if omitted.\n\n**Response 200:**\n```json\n{\n  \"is_valid\": true,\n  \"errors\": [],\n  \"totals\": {\n    \"subtotal\": 320,\n    \"total\": 320,\n    \"display_subtotal\": 6.72,\n    \"display_total\": 6.72\n  },\n  \"currency_info\": {\n    \"display_currency\": { \"id\": 2, \"code\": \"USD\", \"symbol\": \"$\" },\n    \"display_rate\": 0.021\n  },\n  \"line_items\": [\n    {\n      \"item_id\": 100,\n      \"variant_id\": null,\n      \"unit_price\": 150,\n      \"qty\": 2,\n      \"line_total\": 320,\n      \"display_unit_price\": 3.15,\n      \"display_line_total\": 6.72\n    }\n  ]\n}\n```"
+          }
+        },
+
+        {
+          "name": "POST Create Order (with display_currency_id)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"display_currency_id\": 2,\n  \"items\": [\n    {\n      \"item_id\": 100,\n      \"variant_id\": null,\n      \"quantity\": 2,\n      \"modifiers\": [\n        { \"modifier_id\": 301, \"quantity\": 1 }\n      ]\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/public/create-order?t={{qrToken}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["public", "create-order"],
+              "query": [
+                { "key": "t", "value": "{{qrToken}}", "description": "JWT token from QR scan (required)" }
+              ]
+            },
+            "description": "Place an order. Send the display currency the customer was viewing — this gets saved as a snapshot on the order (what they saw at checkout).\n\n**Query:** `t` (JWT token, required)\n\n**Body:**\n```json\n{\n  \"display_currency_id\": 2,\n  \"items\": [\n    { \"item_id\": 100, \"variant_id\": null, \"quantity\": 2, \"modifiers\": [{ \"modifier_id\": 301, \"quantity\": 1 }] }\n  ]\n}\n```\n- `display_currency_id` (int, optional) — the currency_id the customer was viewing. Falls back to merchant default if omitted or invalid. This is saved as a snapshot and does NOT affect real pricing.\n- `items` (array, required) — same format as before.\n\n**Response 201:**\n```json\n{\n  \"order_id\": 999,\n  \"order_number\": \"1005\",\n  \"status\": \"placed\",\n  \"total_price\": 320,\n  \"display_total_price\": 6.72,\n  \"display_currency_id\": 2,\n  \"display_exchange_rate\": 0.021\n}\n```\n\n**Response 400:** various validation errors (same as before)"
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "🧪 Test Scenarios",
+      "item": [
+        {
+          "name": "[Scenario] No currency_id → fallback to default",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/public/menu/{{menuId}}?t={{qrToken}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["public", "menu", "{{menuId}}"],
+              "query": [
+                { "key": "t", "value": "{{qrToken}}" }
+              ]
+            },
+            "description": "No currency_id is sent. Backend falls back to the merchant's default display currency. If no default is configured, falls back to base currency with rate=1 (so display_price = base_price)."
+          }
+        },
+        {
+          "name": "[Scenario] Invalid currency_id → fallback to default",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/public/menu/{{menuId}}?t={{qrToken}}&currency_id=999999",
+              "host": ["{{baseUrl}}"],
+              "path": ["public", "menu", "{{menuId}}"],
+              "query": [
+                { "key": "t", "value": "{{qrToken}}" },
+                { "key": "currency_id", "value": "999999", "description": "Non-existent currency ID — should fallback gracefully" }
+              ]
+            },
+            "description": "An invalid currency_id (not in merchant's active display currencies). Backend falls back to merchant default. Never returns an error — always graceful."
+          }
+        },
+        {
+          "name": "[Scenario] currency_id = base currency → rate=1, prices unchanged",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/public/menu/{{menuId}}?t={{qrToken}}&currency_id={{currencyId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["public", "menu", "{{menuId}}"],
+              "query": [
+                { "key": "t",           "value": "{{qrToken}}" },
+                { "key": "currency_id", "value": "{{currencyId}}", "description": "Set currencyId to the merchant's base_currency_id — display_price should equal base_price" }
+              ]
+            },
+            "description": "When the selected currency equals the merchant's base currency, the rate is forced to 1 regardless of any rate_from_base entry. display_price will equal base_price."
+          }
+        },
+        {
+          "name": "[Scenario] Order without display_currency_id → safe fallback",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"item_id\": 100, \"variant_id\": null, \"quantity\": 1, \"modifiers\": [] }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/public/create-order?t={{qrToken}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["public", "create-order"],
+              "query": [{ "key": "t", "value": "{{qrToken}}" }]
+            },
+            "description": "Order placed without display_currency_id. Backend uses merchant default display currency. display_total_price in response will reflect the default currency."
+          }
+        }
+      ]
+    }
+
+  ]
+}
