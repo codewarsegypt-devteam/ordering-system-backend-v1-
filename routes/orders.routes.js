@@ -23,6 +23,14 @@ router.get(
   requireMerchant,
   asyncHandler(ordersController.exportOrdersExcel),
 );
+// Polling endpoint — MUST be declared before /:orderId so Express doesn't
+// treat the literal string "updates" as an orderId parameter.
+router.get(
+  "/updates",
+  requireAuth,
+  requireMerchant,
+  asyncHandler(ordersController.pollUpdates),
+);
 router.get(
   "/:orderId",
   requireAuth,

@@ -435,6 +435,8 @@ export async function create(req, res) {
     }
   }
   // create order — total_price is in base currency; display_* fields are snapshots of what the customer saw
+  // updated_at is set explicitly so polling (GET /orders/updates?after=) works correctly from the first insert.
+  const now = new Date().toISOString();
   const { data: order, error: orderError } = await supabaseAdmin
     .from("order")
     .insert({
@@ -446,6 +448,7 @@ export async function create(req, res) {
       display_total_price: convertToDisplay(total_price, displayRate),
       display_currency_id: displayCurrency?.id ?? null,
       display_exchange_rate: displayRate,
+      updated_at: now,
     })
     .select()
     .single();
@@ -840,6 +843,95 @@ export async function getOne(req, res) {
   });
 }
 
+/**
+ * GET /orders/updates?after=<ISO>&branch_id=<optional>&limit=<optional>
+ *
+ * Delta polling endpoint. Returns only orders where updated_at > `after`.
+ * Used by kitchen/cashier/admin screens to detect new orders and status changes
+ * without re-fetching the full list on every poll tick.
+ *
+ * Poll loop pattern (frontend):
+ *   1. On mount: call with after = (now - small buffer, e.g. 30s ago)
+ *   2. On each response: set after = response.server_time
+ *   3. Repeat every N seconds (recommended: 5–15s)
+ *
+ * @param {string} after  - Required. ISO 8601 timestamp. Only orders updated AFTER this are returned.
+ * @param {string} branch_id - Optional. Filter to a specific branch (must belong to merchant).
+ * @param {number} limit  - Optional. Default 50, max 100.
+ */
+export async function pollUpdates(req, res) {
+  const { after, branch_id, limit } = req.query;
+
+  // --- Validate `after` ---
+  if (!after) {
+    return res.status(400).json({
+      error: "'after' is required. Send an ISO 8601 timestamp (e.g. 2025-01-01T00:00:00.000Z).",
+    });
+  }
+  const afterDate = new Date(after);
+  if (isNaN(afterDate.getTime())) {
+    return res.status(400).json({
+      error: "'after' must be a valid ISO 8601 timestamp.",
+    });
+  }
+
+  // --- Reject unreasonably old timestamps (prevent full-table scans) ---
+  const MAX_LOOKBACK_HOURS = 24;
+  const maxLookback = new Date(Date.now() - MAX_LOOKBACK_HOURS * 60 * 60 * 1000);
+  if (afterDate < maxLookback) {
+    return res.status(400).json({
+      error: `'after' cannot be more than ${MAX_LOOKBACK_HOURS} hours in the past. Use GET /orders for historical data.`,
+    });
+  }
+
+  const limitNum = normalizeLimit(limit);
+
+  // --- Role-based branch scoping (mirrors list() logic) ---
+  const isBranchLocked = req.user.role === "cashier" || req.user.role === "kitchen";
+  if (isBranchLocked) {
+    if (branch_id && String(branch_id) !== String(req.user.branch_id)) {
+      return res.status(403).json({ error: "Access limited to your branch" });
+    }
+  }
+
+  const branchIds = await getBranchIdsForMerchant(req.user.merchant_id);
+  if (!branchIds.length) {
+    return res.json({ items: [], server_time: new Date().toISOString(), count: 0 });
+  }
+
+  // --- Build query ---
+  let query = supabaseAdmin
+    .from("order")
+    .select("*")
+    .in("branch_id", branchIds)
+    .gt("updated_at", afterDate.toISOString())    // delta: only changed rows
+    .order("updated_at", { ascending: true })      // ascending so frontend uses last item as next cursor
+    .limit(limitNum);
+
+  // Apply branch filter
+  if (isBranchLocked) {
+    // cashier/kitchen: always locked to their own branch
+    query = query.eq("branch_id", req.user.branch_id);
+  } else if (branch_id) {
+    // owner/manager with explicit branch_id filter: verify it belongs to their merchant
+    if (!branchIds.map(String).includes(String(branch_id))) {
+      return res.status(403).json({ error: "branch_id does not belong to your merchant" });
+    }
+    query = query.eq("branch_id", branch_id);
+  }
+
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+
+  const enriched = await enrichOrdersWithContext(data || []);
+
+  return res.json({
+    items: enriched,
+    server_time: new Date().toISOString(), // frontend uses this as the next `after` value
+    count: enriched.length,
+  });
+}
+
 export async function updateStatus(req, res) {
   const { orderId } = req.params;
   const { status } = req.body || {};
@@ -866,9 +958,10 @@ export async function updateStatus(req, res) {
   ) {
     return res.status(403).json({ error: "Access limited to your branch" });
   }
+  // updated_at is set explicitly so polling detects this status change immediately.
   const { data, error } = await supabaseAdmin
     .from("order")
-    .update({ status })
+    .update({ status, updated_at: new Date().toISOString() })
     .eq("id", orderId)
     .select()
     .single();
