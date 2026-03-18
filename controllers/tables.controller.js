@@ -14,6 +14,9 @@ export async function update(req, res) {
   const updates = pick(req.body || {}, ALLOWED_UPDATE);
   if (Object.keys(updates).length === 0)
     return res.status(400).json({ error: "No valid fields to update" });
+  if (updates.number !== undefined && updates.number !== null) {
+    updates.number = String(updates.number).trim();
+  }
   const { data, error } = await supabaseAdmin
     .from("table")
     .update(updates)
@@ -73,8 +76,8 @@ export async function getQr(req, res) {
 
   // 3) لو مش موجود، اعمل واحد جديد مرة واحدة
   const baseUrl = process.env.MENU_FRONTEND_URL ||
-  //  "https://www.qrixa.net";
-  "https://ordering-system-frontend-v1.vercel.app";
+   "https://www.qrixa.net";
+  // "https://ordering-system-frontend-v1.vercel.app";
   // "http://localhost:3000";
   // يفضل تحط tableCode + exp طويل
   const token = jwt.sign(

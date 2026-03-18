@@ -101,8 +101,13 @@ export async function remove(req, res) {
 export async function createTable(req, res) {
   const { branchId } = req.params;
   const { number, seats, is_active, qr_code } = req.body || {};
-  if (number === undefined)
+  if (number === undefined || number === null) {
     return res.status(400).json({ error: "number required" });
+  }
+  const tableNumber = String(number).trim();
+  if (!tableNumber) {
+    return res.status(400).json({ error: "number required" });
+  }
   const { data: branch } = await supabaseAdmin
     .from("branch")
     .select("merchant_id")
@@ -117,7 +122,8 @@ export async function createTable(req, res) {
     .insert({
       merchant_id: branch.merchant_id,
       branch_id: branchId,
-      number: Number(number),
+      // table.number is stored as string to support values like "A1", "VIP-3", etc.
+      number: tableNumber,
       seats: seats ?? null,
       is_active: is_active !== false,
       qr_code: code,
