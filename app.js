@@ -27,8 +27,25 @@ import {
 
 const app = express();
 const server = http.createServer(app);
+
+const ALLOWED_ORIGINS = new Set([
+  "https://www.qrixa.net",
+  "https://ordering-system-frontend-v1.vercel.app",
+  "http://localhost:3000",
+]);
+
+const corsOptions = {
+  origin(origin, cb) {
+    // Allow non-browser clients (Postman, curl) with no Origin header
+    if (!origin) return cb(null, true);
+    if (ALLOWED_ORIGINS.has(origin)) return cb(null, true);
+    return cb(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  credentials: true,
+};
+
 const io = new Server(server, {
-  cors: { origin: "*" },
+  cors: corsOptions,
 });
 
 app.set("io", io);
@@ -43,7 +60,7 @@ io.on("connection", (socket) => {
   });
 });
 
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(morgan("dev"));
 app.use(express.json());
 

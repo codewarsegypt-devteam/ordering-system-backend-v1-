@@ -14,7 +14,7 @@ function pick(obj, keys) {
 
 export async function create(req, res) {
   const { name_ar, name_en, currancy, is_active } = req.body || {};
-  if (!name_ar || !name_en || !currancy) {
+  if (!name_ar || !name_en ) {
     return res.status(400).json({ error: "name_ar, name_en, and currancy required" });
   }
   const { data, error } = await supabaseAdmin
@@ -23,7 +23,7 @@ export async function create(req, res) {
       merchant_id: req.user.merchant_id,
       name_ar,
       name_en,
-      currancy: currancy || "EGP",
+      currancy: currancy || "",
       is_active: is_active !== false,
     })
     .select()

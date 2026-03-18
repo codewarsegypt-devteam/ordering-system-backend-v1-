@@ -7,6 +7,12 @@ const JWT_TABLE_SECRET =
 const SERVICE_TYPES = ["call_waiter", "request_bill", "other"];
 const SERVICE_STATUSES = ["pending", "in_progress", "completed", "cancelled"];
 
+function normalizeLimit(value) {
+  const limit = Number(value);
+  if (!Number.isFinite(limit) || limit <= 0) return 50;
+  return Math.min(Math.floor(limit), 100);
+}
+
 /**
  * استخراج وتحقين التوكين من الـ QR وتأكيد وجود الترابيزة والميرشنت.
  * يرجع { table_id, merchant_id, branch_id } أو يرمي/يرجع خطأ.
@@ -84,6 +90,7 @@ export async function createFromToken(req, res) {
 
   const { table_id, merchant_id, branch_id } = resolved;
 
+  const now = new Date().toISOString();
   const { data: row, error } = await supabaseAdmin
     .from("table_services")
     .insert({
@@ -92,6 +99,7 @@ export async function createFromToken(req, res) {
       table_id,
       type,
       status: "pending",
+      updated_at: now,
     })
     .select()
     .single();
@@ -248,11 +256,101 @@ export async function updateStatus(req, res) {
 
   const { data: updated, error: updateErr } = await supabaseAdmin
     .from("table_services")
-    .update({ status })
+    .update({ status, updated_at: new Date().toISOString() })
     .eq("id", id)
     .select()
     .single();
 
   if (updateErr) return res.status(400).json({ error: updateErr.message });
+  const io = req.app?.get("io");
+  if (io) {
+    io.to(`branch:${existing.branch_id}`).emit("table_service:updated", {
+      id: updated.id,
+      branch_id: updated.branch_id,
+      table_id: updated.table_id,
+      type: updated.type,
+      status: updated.status,
+      updated_at: updated.updated_at ?? null,
+    });
+  }
   res.json(updated);
+}
+
+/**
+ * GET /table-services/updates?after=<ISO>&branch_id=<optional>&limit=<optional>
+ *
+ * Delta polling endpoint. Returns only table service rows where updated_at > `after`.
+ * Supports:
+ *  - newly created service requests
+ *  - status changes
+ *  - any future updates
+ */
+export async function pollUpdates(req, res) {
+  const { after, branch_id, limit } = req.query;
+
+  if (!after) {
+    return res.status(400).json({
+      error:
+        "'after' is required. Send an ISO 8601 timestamp (e.g. 2025-01-01T00:00:00.000Z).",
+    });
+  }
+  const afterDate = new Date(after);
+  if (isNaN(afterDate.getTime())) {
+    return res.status(400).json({ error: "'after' must be a valid ISO 8601 timestamp." });
+  }
+
+  // Prevent accidental full table scans
+  const MAX_LOOKBACK_HOURS = 24;
+  const maxLookback = new Date(Date.now() - MAX_LOOKBACK_HOURS * 60 * 60 * 1000);
+  if (afterDate < maxLookback) {
+    return res.status(400).json({
+      error: `'after' cannot be more than ${MAX_LOOKBACK_HOURS} hours in the past. Use GET /table-services for historical data.`,
+    });
+  }
+
+  const limitNum = normalizeLimit(limit);
+
+  const isBranchLocked = req.user.role === "cashier" || req.user.role === "kitchen";
+  if (isBranchLocked) {
+    if (branch_id && String(branch_id) !== String(req.user.branch_id)) {
+      return res.status(403).json({ error: "Access limited to your branch" });
+    }
+  }
+
+  let query = supabaseAdmin
+    .from("table_services")
+    .select("*")
+    .eq("merchant_id", req.user.merchant_id)
+    .gt("updated_at", afterDate.toISOString())
+    .order("updated_at", { ascending: true })
+    .limit(limitNum);
+
+  if (isBranchLocked) {
+    query = query.eq("branch_id", req.user.branch_id);
+  } else if (branch_id) {
+    query = query.eq("branch_id", branch_id);
+  }
+
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+
+  const rows = data ?? [];
+  const tableIds = [...new Set(rows.map((r) => r.table_id).filter(Boolean))];
+  const { data: tables } =
+    tableIds.length > 0
+      ? await supabaseAdmin.from("table").select("id, number").in("id", tableIds)
+      : { data: [] };
+  const tableById = new Map((tables || []).map((t) => [String(t.id), t]));
+
+  const enriched = rows.map((r) => ({
+    ...r,
+    table_number:
+      r.table_id != null ? (tableById.get(String(r.table_id))?.number ?? null) : null,
+  }));
+
+  return res.json({
+    items: enriched,
+    server_time: new Date().toISOString(),
+    count: enriched.length,
+  });
 }

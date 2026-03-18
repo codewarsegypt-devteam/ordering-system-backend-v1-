@@ -13,9 +13,11 @@ router.use(requireMerchant);
 router.use(requireStaff);
 
 router.get("/", asyncHandler(tableServicesController.list));
+router.get("/updates", asyncHandler(tableServicesController.pollUpdates));
 router.patch(
   "/:id/status",
   asyncHandler(tableServicesController.updateStatus),
 );
+
 
 export default router;
