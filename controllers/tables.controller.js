@@ -72,11 +72,9 @@ export async function getQr(req, res) {
   }
 
   // 3) لو مش موجود، اعمل واحد جديد مرة واحدة
-  const baseUrl =
-    process.env.MENU_FRONTEND_URL ||
-    "https://ordering-system-frontend-v1.vercel.app";
-    // test url
-  // "https://online-merchant-ordering-system-fro.vercel.app";
+  const baseUrl = process.env.MENU_FRONTEND_URL ||
+  //  "https://www.qrixa.net";
+  "https://ordering-system-frontend-v1.vercel.app";
   // "http://localhost:3000";
   // يفضل تحط tableCode + exp طويل
   const token = jwt.sign(

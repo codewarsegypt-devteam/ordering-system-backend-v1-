@@ -26,3 +26,6 @@ export const uploadItemImages = upload.fields([
 
 /** Single logo image (field name: logo). */
 export const uploadLogo = upload.single("logo");
+
+/** Single menu image (field name: image). */
+export const uploadMenuImage = upload.single("image");

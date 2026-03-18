@@ -7,6 +7,7 @@ import {
   requireStaff,
 } from "../middleware/auth.js";
 import * as menusController from "../controllers/menus.controller.js";
+import { uploadMenuImage as uploadMenuImageMw } from "../middleware/upload.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -39,6 +40,19 @@ router.delete(
   "/:menuId",
   requireCanEditMenu,
   asyncHandler(menusController.remove),
+);
+
+// Menu cover image: upload/update and delete
+router.post(
+  "/:menuId/image",
+  requireCanEditMenu,
+  uploadMenuImageMw,
+  asyncHandler(menusController.uploadMenuImage),
+);
+router.delete(
+  "/:menuId/image",
+  requireCanEditMenu,
+  asyncHandler(menusController.deleteMenuImage),
 );
 
 export default router;
