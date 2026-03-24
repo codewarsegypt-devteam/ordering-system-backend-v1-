@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import * as XLSX from "xlsx";
 import dayjs from "dayjs";
 import { resolveDisplayCurrency, convertToDisplay } from "../lib/currency.js";
+import { getOrCreateActiveTableSession } from "../lib/tableSessions.js";
 const JWT_TABLE_SECRET =
   process.env.JWT_TABLE_SECRET || process.env.JWT_SECRET || "dev-secret";
 const ORDER_STATUSES = [
@@ -217,6 +218,7 @@ async function rollbackOrder(orderId) {
   await supabaseAdmin.from("order").delete().eq("id", orderId);
 }
 
+
 export async function create(req, res) {
   const { t: token } = req.query;
   // display_currency_id: the currency_id the customer had selected at checkout
@@ -279,6 +281,14 @@ export async function create(req, res) {
         .json({ error: "tokenTableId must belong to the given tokenBranchId" });
     }
   }
+  // Ensure exactly one active session per table and auto-open when needed.
+  const tableSession = await getOrCreateActiveTableSession({
+    merchantId: tokenMerchantId,
+    branchId: tokenBranchId,
+    tableId: tokenTableId,
+    openedByType: "customer",
+  });
+
   // Resolve display currency once — used for all display snapshot calculations.
   // Falls back safely to base currency if selectedCurrencyId is missing/invalid.
   const { currency: displayCurrency, rate_from_base: displayRate } =
@@ -442,6 +452,7 @@ export async function create(req, res) {
     .insert({
       branch_id: tokenBranchId,
       table_id: tokenTableId || null,
+      table_session_id: tableSession.id,
       order_number,
       status: "placed",
       total_price,
@@ -514,6 +525,7 @@ export async function create(req, res) {
   }
   res.status(201).json({
     order_id: order.id,
+    table_session_id: order.table_session_id,
     order_number: order.order_number,
     status: order.status,
     total_price: order.total_price,
@@ -522,6 +534,7 @@ export async function create(req, res) {
     display_exchange_rate: order.display_exchange_rate,
   });
 }
+
 
 export async function list(req, res) {
   const {
@@ -968,3 +981,4 @@ export async function updateStatus(req, res) {
   if (error) return res.status(400).json({ error: error.message });
   res.json(data);
 }
+

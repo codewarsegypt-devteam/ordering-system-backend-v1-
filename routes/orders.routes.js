@@ -2,7 +2,6 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import {
   requireAuth,
-  requireStaff,
   requireMerchant,
 } from "../middleware/auth.js";
 import * as ordersController from "../controllers/orders.controller.js";

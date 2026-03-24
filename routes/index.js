@@ -13,6 +13,7 @@ export { default as variantsRoutes } from "./variants.routes.js";
 export { default as modifiersRoutes } from "./modifiers.routes.js";
 export { default as publicRoutes } from "./public.routes.js";
 export { default as ordersRoutes } from "./orders.routes.js";
+export { default as tableSessionsRoutes } from "./tableSessions.routes.js";
 export { default as kitchenRoutes } from "./kitchen.routes.js";
 export { default as cashierRoutes } from "./cashier.routes.js";
 export { default as statsRoutes } from "./stats.routes.js";

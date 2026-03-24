@@ -18,6 +18,7 @@ import {
   modifiersRoutes,
   publicRoutes,
   ordersRoutes,
+  tableSessionsRoutes,
   kitchenRoutes,
   cashierRoutes,
   statsRoutes,
@@ -68,6 +69,7 @@ app.use(express.json());
 app.use("/auth", authRoutes);
 app.use("/public", publicRoutes);
 app.use("/orders", ordersRoutes);
+app.use("/table-sessions", tableSessionsRoutes);
 
 // Staff (auth required on routers)
 app.use("/merchants", merchantsRoutes);
