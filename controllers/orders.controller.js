@@ -87,17 +87,23 @@ async function validateModifierRules(
     .select("modifier_group_id, min_select, max_select")
     .eq("item_id", itemId);
   if (!rules?.length) return { valid: true };
-  const selected = new Set(selectedModifierIds || []);
+  // Normalize ids to strings to avoid frontend/backend type mismatches.
+  const selected = new Set(
+    (selectedModifierIds || []).map((id) => String(id)),
+  );
   for (const rule of rules) {
     const { data: modsInGroup } = await supabaseAdmin
       .from("modifiers")
       .select("id")
       .eq("modifier_group_id", rule.modifier_group_id)
       .eq("merchant_id", merchantId);
-    const inGroup = (modsInGroup || []).filter((m) => selected.has(m.id));
+    const inGroup = (modsInGroup || []).filter((m) =>
+      selected.has(String(m.id)),
+    );
     const count = inGroup.length;
     const min = Number(rule.min_select) ?? 0;
     const max = Number(rule.max_select) ?? 999;
+    // min_select/max_select are inclusive.
     if (count < min) {
       return {
         valid: false,
@@ -335,7 +341,7 @@ export async function create(req, res) {
     }
     // validate modifiers
     const selectedModIds = (modifiers || [])
-      .map((m) => m.modifier_id)
+      .map((m) => m?.modifier_id ?? m?.modifierId ?? m?.id)
       .filter(Boolean);
     // validate modifier rules
     const modRules = await validateModifierRules(
@@ -400,6 +406,12 @@ export async function create(req, res) {
     total_price += line_total;
     // validate modifier quantity
     for (const mod of modifiers || []) {
+      const modId = mod?.modifier_id ?? mod?.modifierId ?? mod?.id;
+      if (!modId) {
+        return res.status(400).json({
+          error: "Modifier id is required for each selected modifier",
+        });
+      }
       const modLineQty = Number(mod.quantity) || 1;
       if (
         !Number.isFinite(modLineQty) ||
@@ -414,12 +426,12 @@ export async function create(req, res) {
       const { data: modRow } = await supabaseAdmin
         .from("modifiers")
         .select("id, name_en, price")
-        .eq("id", mod.modifier_id)
+        .eq("id", modId)
         .eq("merchant_id", tokenMerchantId)
         .single();
       if (!modRow) {
         return res.status(400).json({
-          error: `Modifier ${mod.modifier_id} not found or does not belong to this merchant`,
+          error: `Modifier ${modId} not found or does not belong to this merchant`,
         });
       }
       // validate modifier price
@@ -436,7 +448,7 @@ export async function create(req, res) {
       total_price += price * modQty;
       // add modifier row
       modifierRows.push({
-        modifier_id: mod.modifier_id,
+        modifier_id: modId,
         name_snapshot: name,
         price_snapshot: price,
         price: price * modQty,

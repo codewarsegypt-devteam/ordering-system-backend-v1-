@@ -593,13 +593,19 @@ export async function validateCart(req, res) {
       .from("item_modifier_group")
       .select("*")
       .eq("item_id", item_id);
-    const selectedModIds = (modifiers || []).map((m) => m.modifier_id);
+    const selectedModIds = (modifiers || [])
+      .map((m) => m?.modifier_id ?? m?.modifierId ?? m?.id)
+      .filter(Boolean)
+      .map((id) => String(id));
+    const selectedModIdSet = new Set(selectedModIds);
     for (const rule of imgLinks || []) {
       const { data: mods } = await supabaseAdmin
         .from("modifiers")
         .select("id")
         .eq("modifier_group_id", rule.modifier_group_id);
-      const inGroup = (mods || []).filter((m) => selectedModIds.includes(m.id));
+      const inGroup = (mods || []).filter((m) =>
+        selectedModIdSet.has(String(m.id)),
+      );
       if (inGroup.length < rule.min_select) {
         errors.push(
           `Item ${item.name_en}: select at least ${rule.min_select} from modifier group`,
@@ -615,10 +621,12 @@ export async function validateCart(req, res) {
     let hasModError = false;
     const modSelections = modifiers || [];
     for (const sel of modSelections) {
+      const modId = sel?.modifier_id ?? sel?.modifierId ?? sel?.id;
+      if (!modId) continue;
       const { data: mod } = await supabaseAdmin
         .from("modifiers")
         .select("id, price")
-        .eq("id", sel.modifier_id)
+        .eq("id", modId)
         .single();
       if (mod) {
         const modPrice = Number(mod.price);
