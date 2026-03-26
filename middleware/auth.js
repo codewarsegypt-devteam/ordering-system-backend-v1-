@@ -26,6 +26,13 @@ export async function requireAuth(req, res, next) {
   if (user.status !== "active") {
     return res.status(403).json({ error: "Account disabled" });
   }
+  if (decoded.iat && user.password_changed_at) {
+    const issuedMs = decoded.iat * 1000;
+    const changedMs = new Date(user.password_changed_at).getTime();
+    if (changedMs > issuedMs) {
+      return res.status(401).json({ error: "Session expired" });
+    }
+  }
   req.user = user;
   next();
 }
@@ -50,7 +57,13 @@ export async function optionalAuth(req, res, next) {
     .select("*")
     .eq("id", decoded.sub)
     .single();
-  req.user = user && user.status === "active" ? user : null;
+  let u = user && user.status === "active" ? user : null;
+  if (u && decoded.iat && u.password_changed_at) {
+    if (new Date(u.password_changed_at).getTime() > decoded.iat * 1000) {
+      u = null;
+    }
+  }
+  req.user = u;
   next();
 }
 // Role constants (from Roles spec: Owner, Manager, Cashier, Kitchen)

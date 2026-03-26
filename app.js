@@ -33,6 +33,7 @@ const ALLOWED_ORIGINS = new Set([
   "https://www.qrixa.net",
   "https://ordering-system-frontend-v1.vercel.app",
   "http://localhost:3000",
+  "http://localhost:3001",
 ]);
 
 const corsOptions = {
