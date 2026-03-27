@@ -8,6 +8,8 @@ import {
   resolveDisplayCurrency,
   convertToDisplay,
 } from "../lib/currency.js";
+import { normalizeEmail } from "../lib/email.js";
+import { toUserResponse } from "../lib/userResponse.js";
 const JWT_TABLE_SECRET =
   process.env.JWT_TABLE_SECRET || process.env.JWT_SECRET || "dev-secret";
 
@@ -691,38 +693,76 @@ export async function createOrder(req, res) {
 }
 
 export async function createOwnerUser(req, res) {
-  const { name, password, merchant_id } = req.body || {};
-  if (!name || !password || !merchant_id) {
-    return res.status(400).json({ error: "name, password and merchant_id required" });
+  const { name, email, password, merchant_id } = req.body || {};
+  if (!name || !email || !password || !merchant_id) {
+    return res
+      .status(400)
+      .json({ error: "name, email, password, and merchant_id required" });
   }
+  const emailNorm = normalizeEmail(email);
+  if (!emailNorm.includes("@")) {
+    return res.status(400).json({ error: "Invalid email" });
+  }
+  const { data: dup, error: dupErr } = await supabaseAdmin
+    .from("user")
+    .select("id")
+    .ilike("email", emailNorm)
+    .limit(1);
+  if (dupErr) return res.status(500).json({ error: dupErr.message });
+  if (dup?.length) return res.status(409).json({ error: "Email already registered" });
   const password_hash = await bcrypt.hash(password, 10);
-  const { data, error } = await supabaseAdmin.from("user").insert({
-    name,
-    password_hash,
-    role:"owner",
-    status:"active",
-    merchant_id,
-    branch_id:null,
-  });
+  const now = new Date().toISOString();
+  const { data, error } = await supabaseAdmin
+    .from("user")
+    .insert({
+      name,
+      email: emailNorm,
+      password_hash,
+      role: "owner",
+      status: "active",
+      merchant_id,
+      branch_id: null,
+      email_verified_at: now,
+      password_changed_at: now,
+    })
+    .select()
+    .single();
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  res.json(toUserResponse(data));
 }
 
 /**
  * Public signup endpoint to create a new merchant + owner user.
  * POST /public/signup
- * Body: { username, merchant_name, password }
+ * Body: { username, email, merchant_name, password }
  */
 export async function signupMerchantOwner(req, res) {
-  const { username, merchant_name, password } = req.body || {};
+  const { username, email, merchant_name, password } = req.body || {};
 
-  if (!username || !merchant_name || !password) {
+  if (!username || !email || !merchant_name || !password) {
     return res.status(400).json({
-      error: "username, merchant_name and password are required",
+      error: "username, email, merchant_name, and password are required",
     });
   }
 
-  // Ensure username is not already taken (global check)
+  const emailNorm = normalizeEmail(email);
+  if (!emailNorm.includes("@")) {
+    return res.status(400).json({ error: "Invalid email" });
+  }
+
+  const { data: existingByEmail, error: emailErr } = await supabaseAdmin
+    .from("user")
+    .select("id")
+    .ilike("email", emailNorm)
+    .limit(1);
+
+  if (emailErr) {
+    return res.status(500).json({ error: emailErr.message });
+  }
+  if (existingByEmail?.length) {
+    return res.status(409).json({ error: "Email already registered" });
+  }
+
   const { data: existingUser, error: existingUserErr } = await supabaseAdmin
     .from("user")
     .select("id, merchant_id")
@@ -752,16 +792,20 @@ export async function signupMerchantOwner(req, res) {
   }
 
   const password_hash = await bcrypt.hash(password, 10);
+  const now = new Date().toISOString();
 
   const { data: user, error: userErr } = await supabaseAdmin
     .from("user")
     .insert({
       name: username,
+      email: emailNorm,
       password_hash,
       role: "owner",
       status: "active",
       merchant_id: merchant.id,
       branch_id: null,
+      email_verified_at: now,
+      password_changed_at: now,
     })
     .select()
     .single();
@@ -774,7 +818,7 @@ export async function signupMerchantOwner(req, res) {
 
   return res.status(201).json({
     merchant,
-    user,
+    user: toUserResponse(user),
   });
 }
 

@@ -9,15 +9,10 @@ import {
   buildPasswordResetEmail,
   buildVerificationEmail,
 } from "../lib/emailTemplates.js";
+import { normalizeEmail } from "../lib/email.js";
 
 const VERIFY_MS = 48 * 60 * 60 * 1000;
 const RESET_MS = 60 * 60 * 1000;
-
-function normalizeEmail(email) {
-  return String(email || "")
-    .trim()
-    .toLowerCase();
-}
 
 async function loadMerchantAndBranchNames(user) {
   const [merchantRes, branchRes] = await Promise.all([
@@ -425,13 +420,27 @@ export async function me(req, res) {
 
 /** Legacy: instant active owner (no email verification). Prefer POST /auth/signup. */
 export async function register(req, res) {
-  const { name, password, merchant_name } = req.body || {};
-  if (!name || !password || !merchant_name) {
-    return res
-      .status(400)
-      .json({ error: "name, password and merchant_name required" });
+  const { name, password, merchant_name, email } = req.body || {};
+  if (!name || !password || !merchant_name || !email) {
+    return res.status(400).json({
+      error: "name, email, password, and merchant_name required",
+    });
+  }
+  const emailNorm = normalizeEmail(email);
+  if (!emailNorm.includes("@")) {
+    return res.status(400).json({ error: "Invalid email" });
+  }
+  const { data: existingRows, error: lookupErr } = await supabaseAdmin
+    .from("user")
+    .select("id")
+    .ilike("email", emailNorm)
+    .limit(1);
+  if (lookupErr) return res.status(500).json({ error: lookupErr.message });
+  if (existingRows?.length) {
+    return res.status(409).json({ error: "Email already registered" });
   }
   const password_hash = await bcrypt.hash(password, 10);
+  const now = new Date().toISOString();
   const { data: merchant, error: merchantErr } = await supabaseAdmin
     .from("merchant")
     .insert({
@@ -444,17 +453,29 @@ export async function register(req, res) {
     .from("user")
     .insert({
       name,
+      email: emailNorm,
       password_hash,
       role: "owner",
       status: "active",
       merchant_id: merchant.id,
       branch_id: null,
+      email_verified_at: now,
+      password_changed_at: now,
     })
     .select()
     .single();
-  if (userErr) return res.status(400).json({ error: userErr.message });
+  if (userErr) {
+    await supabaseAdmin.from("merchant").delete().eq("id", merchant.id);
+    const dup =
+      userErr.code === "23505" ||
+      /duplicate|unique/i.test(userErr.message || "");
+    if (dup) {
+      return res.status(409).json({ error: "Email already registered" });
+    }
+    return res.status(400).json({ error: userErr.message });
+  }
   return res.status(201).json({
     merchant,
-    user,
+    user: toUserResponse(user),
   });
 }

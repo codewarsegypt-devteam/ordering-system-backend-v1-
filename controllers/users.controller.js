@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { supabaseAdmin } from "../db_connection.js";
+import { normalizeEmail } from "../lib/email.js";
 import { toUserResponse } from "../lib/userResponse.js";
 
 const ROLES = ["owner", "manager", "cashier", "kitchen"];
@@ -18,12 +19,35 @@ export async function create(req, res) {
   
   const merchant_id = req.user.merchant_id;
 
-  const { name, password, role, branch_id } = req.body || {};
-  if (!name || !password || !role) {
-    return res.status(400).json({ error: "name, password, and role required" });
+  const { name, email, password, role, branch_id, status } = req.body || {};
+  if (!name || !email || !password || !role) {
+    return res
+      .status(400)
+      .json({ error: "name, email, password, and role required" });
+  }
+  const emailNorm = normalizeEmail(email);
+  if (!emailNorm.includes("@")) {
+    return res.status(400).json({ error: "Invalid email" });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: "password must be at least 6 characters" });
   }
   if (!ROLES.includes(role)) {
     return res.status(400).json({ error: "Invalid role" });
+  }
+  if (status !== undefined && !STATUSES.includes(status)) {
+    return res.status(400).json({ error: "status must be active or disabled" });
+  }
+  const userStatus = status === undefined ? "active" : status;
+
+  const { data: existingByEmail, error: emailLookupErr } = await supabaseAdmin
+    .from("user")
+    .select("id")
+    .ilike("email", emailNorm)
+    .limit(1);
+  if (emailLookupErr) return res.status(500).json({ error: emailLookupErr.message });
+  if (existingByEmail?.length) {
+    return res.status(409).json({ error: "Email already registered" });
   }
 
   // Manager cannot do anything reserved for owner (e.g. create owner).
@@ -69,16 +93,20 @@ export async function create(req, res) {
   }
 
   const password_hash = await bcrypt.hash(password, 10);
+  const now = new Date().toISOString();
 
   const { data, error } = await supabaseAdmin
     .from("user")
     .insert({
       name,
+      email: emailNorm,
       password_hash,
       merchant_id,
       branch_id: branch_id ?? null,
       role,
-      status: "active",
+      status: userStatus,
+      email_verified_at: now,
+      password_changed_at: now,
     })
     .select()
     .single();
