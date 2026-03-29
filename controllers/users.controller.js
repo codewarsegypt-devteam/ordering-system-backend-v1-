@@ -3,7 +3,7 @@ import { supabaseAdmin } from "../db_connection.js";
 import { normalizeEmail } from "../lib/email.js";
 import { toUserResponse } from "../lib/userResponse.js";
 
-const ROLES = ["owner", "manager", "cashier", "kitchen"];
+const ROLES = ["owner", "manager", "cashier", "kitchen", "waiter"];
 const STATUSES = ["active", "disabled"];
 const ALLOWED_UPDATE = ["name", "role", "branch_id"];
 
@@ -12,8 +12,6 @@ function pick(obj, keys) {
   for (const k of keys) if (obj[k] !== undefined) out[k] = obj[k];
   return out;
 }
-
-
 
 export async function create(req, res) {
   

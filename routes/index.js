@@ -15,6 +15,7 @@ export { default as publicRoutes } from "./public.routes.js";
 export { default as ordersRoutes } from "./orders.routes.js";
 export { default as tableSessionsRoutes } from "./tableSessions.routes.js";
 export { default as kitchenRoutes } from "./kitchen.routes.js";
+export { default as waiterRoutes } from "./waiter.router.js";
 export { default as cashierRoutes } from "./cashier.routes.js";
 export { default as statsRoutes } from "./stats.routes.js";
 export { default as tableServicesRoutes } from "./tableServices.routes.js";

@@ -21,6 +21,7 @@ import {
   ordersRoutes,
   tableSessionsRoutes,
   kitchenRoutes,
+  waiterRoutes,
   cashierRoutes,
   statsRoutes,
   tableServicesRoutes,
@@ -86,8 +87,9 @@ app.use("/categories", categoriesRoutes);
 app.use("/", variantsRoutes);
 app.use("/", modifiersRoutes);
 app.use("/", itemsRoutes);
-
+//  /waiter/orders/ready
 app.use("/kitchen", kitchenRoutes);
+app.use("/waiter", waiterRoutes);
 app.use("/cashier", cashierRoutes);
 app.use("/stats", statsRoutes);
 app.use("/table-services", tableServicesRoutes);

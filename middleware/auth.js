@@ -68,7 +68,7 @@ export async function optionalAuth(req, res, next) {
 }
 // Role constants (from Roles spec: Owner, Manager, Cashier, Kitchen)
 const MANAGER_ROLES = ["owner", "manager"];
-const STAFF_ROLES = ["owner", "manager", "cashier", "kitchen"];
+const STAFF_ROLES = ["owner", "manager", "cashier", "kitchen", "waiter"];
 
 /** Require owner or manager (edit menu, view orders, change status, reports). */
 export function requireManager(req, res, next) {
@@ -149,6 +149,13 @@ export function requireKitchen(req, res, next) {
   next();
 }
 
+export function requireWaiter(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+  if (req.user.role !== "waiter") {
+    return res.status(403).json({ error: "Waiter role required" });
+  }
+  next();
+}
 /** Require user's branch_id to match param branch_id (for cashier/kitchen). */
 export function requireBranchAccess(req, res, next) {
   if (!req.user) return res.status(401).json({ error: "Unauthorized" });

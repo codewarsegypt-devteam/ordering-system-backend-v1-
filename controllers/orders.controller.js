@@ -88,9 +88,7 @@ async function validateModifierRules(
     .eq("item_id", itemId);
   if (!rules?.length) return { valid: true };
   // Normalize ids to strings to avoid frontend/backend type mismatches.
-  const selected = new Set(
-    (selectedModifierIds || []).map((id) => String(id)),
-  );
+  const selected = new Set((selectedModifierIds || []).map((id) => String(id)));
   for (const rule of rules) {
     const { data: modsInGroup } = await supabaseAdmin
       .from("modifiers")
@@ -155,7 +153,7 @@ function normalizeSortDir(value) {
   return String(value).toLowerCase() === "asc" ? "asc" : "desc";
 }
 
-async function enrichOrdersWithContext(orders) {
+export async function enrichOrdersWithContext(orders) {
   if (!orders?.length) return [];
 
   const branchIds = [
@@ -223,7 +221,6 @@ async function rollbackOrder(orderId) {
   }
   await supabaseAdmin.from("order").delete().eq("id", orderId);
 }
-
 
 export async function create(req, res) {
   const { t: token } = req.query;
@@ -397,10 +394,10 @@ export async function create(req, res) {
       variant_id: variant_id || null,
       quantity: qty,
       name_snapshot,
-      price_snapshot,                                              // base unit price
-      total_price: line_total,                                     // base line total
+      price_snapshot, // base unit price
+      total_price: line_total, // base line total
       display_price_snapshot: convertToDisplay(unit_price, displayRate), // display unit price
-      display_total_price: convertToDisplay(line_total, displayRate),    // display line total
+      display_total_price: convertToDisplay(line_total, displayRate), // display line total
     });
     // add to total price
     total_price += line_total;
@@ -487,10 +484,10 @@ export async function create(req, res) {
         variant_id: row.variant_id,
         quantity: row.quantity,
         name_snapshot: row.name_snapshot,
-        price_snapshot: row.price_snapshot,                        // base unit price snapshot
-        total_price: row.total_price,                              // base line total
-        display_price_snapshot: row.display_price_snapshot,        // display unit price snapshot
-        display_total_price: row.display_total_price,              // display line total
+        price_snapshot: row.price_snapshot, // base unit price snapshot
+        total_price: row.total_price, // base line total
+        display_price_snapshot: row.display_price_snapshot, // display unit price snapshot
+        display_total_price: row.display_total_price, // display line total
       })
       .select()
       .single();
@@ -546,7 +543,6 @@ export async function create(req, res) {
     display_exchange_rate: order.display_exchange_rate,
   });
 }
-
 
 export async function list(req, res) {
   const {
@@ -610,7 +606,8 @@ export async function list(req, res) {
     }
 
     const { data: tables, error: tablesError } = await tablesQuery;
-    if (tablesError) return res.status(500).json({ error: tablesError.message });
+    if (tablesError)
+      return res.status(500).json({ error: tablesError.message });
 
     filteredTableIds = (tables || []).map((table) => table.id);
     if (!filteredTableIds.length) {
@@ -777,14 +774,7 @@ export async function exportOrdersExcel(req, res) {
   if (error) return res.status(500).json({ error: error.message });
   const enriched = await enrichOrdersWithContext(orders || []);
 
-  const headers = [
-    "Order #",
-    "Date",
-    "Branch",
-    "Table",
-    "Status",
-    "Total",
-  ];
+  const headers = ["Order #", "Date", "Branch", "Table", "Status", "Total"];
   const rows = enriched.map((o) => [
     o.order_number ?? "",
     o.created_at ? dayjs(o.created_at).format("YYYY-MM-DD HH:mm") : "",
@@ -800,10 +790,7 @@ export async function exportOrdersExcel(req, res) {
   const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 
   const filename = `orders_${dayjs().format("YYYY-MM-DD_HH-mm")}.xlsx`;
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="${filename}"`,
-  );
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.setHeader(
     "Content-Type",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -890,7 +877,8 @@ export async function pollUpdates(req, res) {
   // --- Validate `after` ---
   if (!after) {
     return res.status(400).json({
-      error: "'after' is required. Send an ISO 8601 timestamp (e.g. 2025-01-01T00:00:00.000Z).",
+      error:
+        "'after' is required. Send an ISO 8601 timestamp (e.g. 2025-01-01T00:00:00.000Z).",
     });
   }
   const afterDate = new Date(after);
@@ -902,7 +890,9 @@ export async function pollUpdates(req, res) {
 
   // --- Reject unreasonably old timestamps (prevent full-table scans) ---
   const MAX_LOOKBACK_HOURS = 24;
-  const maxLookback = new Date(Date.now() - MAX_LOOKBACK_HOURS * 60 * 60 * 1000);
+  const maxLookback = new Date(
+    Date.now() - MAX_LOOKBACK_HOURS * 60 * 60 * 1000,
+  );
   if (afterDate < maxLookback) {
     return res.status(400).json({
       error: `'after' cannot be more than ${MAX_LOOKBACK_HOURS} hours in the past. Use GET /orders for historical data.`,
@@ -912,7 +902,8 @@ export async function pollUpdates(req, res) {
   const limitNum = normalizeLimit(limit);
 
   // --- Role-based branch scoping (mirrors list() logic) ---
-  const isBranchLocked = req.user.role === "cashier" || req.user.role === "kitchen";
+  const isBranchLocked =
+    req.user.role === "cashier" || req.user.role === "kitchen";
   if (isBranchLocked) {
     if (branch_id && String(branch_id) !== String(req.user.branch_id)) {
       return res.status(403).json({ error: "Access limited to your branch" });
@@ -921,7 +912,11 @@ export async function pollUpdates(req, res) {
 
   const branchIds = await getBranchIdsForMerchant(req.user.merchant_id);
   if (!branchIds.length) {
-    return res.json({ items: [], server_time: new Date().toISOString(), count: 0 });
+    return res.json({
+      items: [],
+      server_time: new Date().toISOString(),
+      count: 0,
+    });
   }
 
   // --- Build query ---
@@ -929,8 +924,8 @@ export async function pollUpdates(req, res) {
     .from("order")
     .select("*")
     .in("branch_id", branchIds)
-    .gt("updated_at", afterDate.toISOString())    // delta: only changed rows
-    .order("updated_at", { ascending: true })      // ascending so frontend uses last item as next cursor
+    .gt("updated_at", afterDate.toISOString()) // delta: only changed rows
+    .order("updated_at", { ascending: true }) // ascending so frontend uses last item as next cursor
     .limit(limitNum);
 
   // Apply branch filter
@@ -940,7 +935,9 @@ export async function pollUpdates(req, res) {
   } else if (branch_id) {
     // owner/manager with explicit branch_id filter: verify it belongs to their merchant
     if (!branchIds.map(String).includes(String(branch_id))) {
-      return res.status(403).json({ error: "branch_id does not belong to your merchant" });
+      return res
+        .status(403)
+        .json({ error: "branch_id does not belong to your merchant" });
     }
     query = query.eq("branch_id", branch_id);
   }
@@ -993,8 +990,6 @@ export async function updateStatus(req, res) {
   if (error) return res.status(400).json({ error: error.message });
   res.json(data);
 }
-
-
 
 // /////////////////////////////////////////////////////////////////////
 function normalizeRpcItems(items) {
