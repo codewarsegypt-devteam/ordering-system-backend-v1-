@@ -994,3 +994,149 @@ export async function updateStatus(req, res) {
   res.json(data);
 }
 
+
+
+// /////////////////////////////////////////////////////////////////////
+function normalizeRpcItems(items) {
+  return items.map((line) => ({
+    item_id: line.item_id,
+    variant_id: line.variant_id ?? null,
+    quantity: line.quantity,
+    modifiers: Array.isArray(line.modifiers)
+      ? line.modifiers.map((mod) => ({
+          modifier_id: mod?.modifier_id ?? mod?.modifierId ?? mod?.id ?? null,
+          quantity: mod?.quantity ?? 1,
+        }))
+      : [],
+  }));
+}
+
+function mapRpcError(error) {
+  if (!error) {
+    return {
+      status: 500,
+      payload: { error: "Unknown error" },
+    };
+  }
+
+  const message = error.message || "Failed to create order";
+
+  // PostgreSQL unique violation
+  if (error.code === "23505") {
+    return {
+      status: 409,
+      payload: { error: "Duplicate request or conflicting order creation" },
+    };
+  }
+
+  // PostgreSQL raise exception from function
+  if (error.code === "P0001") {
+    return {
+      status: 400,
+      payload: { error: message },
+    };
+  }
+
+  return {
+    status: 500,
+    payload: {
+      error:
+        process.env.NODE_ENV === "development"
+          ? message
+          : "Failed to create order",
+    },
+  };
+}
+
+// create order_atomically
+export async function createAtomicOrder(req, res) {
+  const { t: token } = req.query;
+  const { items: lineItems, display_currency_id } = req.body || {};
+
+  if (!token) {
+    return res.status(400).json({ error: "Token (t) required" });
+  }
+
+  let payload;
+  try {
+    payload = jwt.verify(token, JWT_TABLE_SECRET);
+  } catch (err) {
+    const message =
+      process.env.NODE_ENV === "development" && err?.message
+        ? `Invalid token: ${err.message}`
+        : "Invalid token";
+
+    return res.status(400).json({ error: message });
+  }
+
+  const {
+    merchantId: tokenMerchantId,
+    branchId: tokenBranchId,
+    tableId: tokenTableId,
+  } = payload || {};
+
+  if (
+    !tokenMerchantId ||
+    !tokenBranchId ||
+    !tokenTableId ||
+    !Array.isArray(lineItems) ||
+    lineItems.length === 0
+  ) {
+    return res.status(400).json({
+      error: "tokenMerchantId, tokenBranchId, tokenTableId, and items required",
+    });
+  }
+
+  let rpcItems;
+  try {
+    rpcItems = normalizeRpcItems(lineItems);
+  } catch {
+    return res.status(400).json({
+      error: "Invalid items payload",
+    });
+  }
+
+  const { data, error } = await supabaseAdmin.rpc("create_order_atomic", {
+    p_merchant_id: Number(tokenMerchantId),
+    p_branch_id: Number(tokenBranchId),
+    p_table_id: Number(tokenTableId),
+    p_items: rpcItems,
+    p_display_currency_id: display_currency_id
+      ? Number(display_currency_id)
+      : null,
+    p_opened_by_type: "customer",
+  });
+  if (error) {
+    const mapped = mapRpcError(error);
+    return res.status(mapped.status).json(mapped.payload);
+  }
+
+  const orderEvent = {
+    order_id: data.order_id,
+    table_session_id: data.table_session_id,
+    order_number: data.order_number,
+    status: data.status,
+    total_price: data.total_price,
+    display_total_price: data.display_total_price,
+    branch_id: tokenBranchId,
+    table_id: tokenTableId,
+  };
+
+  const io = req.app?.get("io");
+  if (io) {
+    io.emit("order:created", orderEvent);
+    io.to(`branch:${tokenBranchId}`).emit("order:created", orderEvent);
+    io.to(`table:${tokenTableId}`).emit("order:created", orderEvent);
+  }
+
+  return res.status(201).json({
+    order_id: data.order_id,
+    table_session_id: data.table_session_id,
+    order_number: data.order_number,
+    status: data.status,
+    total_price: data.total_price,
+    display_total_price: data.display_total_price,
+    display_currency_id: data.display_currency_id,
+    display_exchange_rate: data.display_exchange_rate,
+  });
+}

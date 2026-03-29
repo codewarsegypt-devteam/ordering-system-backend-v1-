@@ -22,3 +22,4 @@ router.patch("/:userId/branch", asyncHandler(usersController.updateBranch));
 router.delete("/:userId", asyncHandler(usersController.remove));
 
 export default router;
+ 

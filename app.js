@@ -5,6 +5,7 @@ import morgan from "morgan";
 import { Server } from "socket.io";
 import http from "http";
 import { errorHandler } from "./middleware/errorHandler.js";
+// import { connectRedis } from "./lib/redisClient.js";
 import {
   authRoutes,
   merchantsRoutes,
@@ -25,6 +26,8 @@ import {
   tableServicesRoutes,
   currenciesRoutes,
 } from "./routes/index.js";
+
+// await connectRedis();
 
 const app = express();
 const server = http.createServer(app);

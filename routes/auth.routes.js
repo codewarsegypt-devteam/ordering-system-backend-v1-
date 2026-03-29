@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { requireAuth, requireMerchant } from "../middleware/auth.js";
+import { requireAuth } from "../middleware/auth.js";
 import * as authController from "../controllers/auth.controller.js";
 
 const router = Router();
@@ -17,18 +17,6 @@ router.post("/reset-password", asyncHandler(authController.resetPassword));
 
 router.post("/logout", requireAuth, authController.logout);
 router.get("/me", requireAuth, authController.me);
-router.patch(
-  "/me",
-  requireAuth,
-  requireMerchant,
-  asyncHandler(authController.updateProfile),
-);
-router.patch(
-  "/me/password",
-  requireAuth,
-  requireMerchant,
-  asyncHandler(authController.updateMyPassword),
-);
 router.post("/register", asyncHandler(authController.register));
 
 export default router;

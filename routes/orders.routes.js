@@ -1,14 +1,15 @@
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import {
-  requireAuth,
-  requireMerchant,
-} from "../middleware/auth.js";
+import { requireAuth, requireMerchant } from "../middleware/auth.js";
 import * as ordersController from "../controllers/orders.controller.js";
 
 const router = Router();
 
 router.post("/", asyncHandler(ordersController.create));
+router.post(
+  "/create-atomic-order",
+  asyncHandler(ordersController.createAtomicOrder),
+);
 router.get(
   "/",
   requireAuth,

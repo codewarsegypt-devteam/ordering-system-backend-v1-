@@ -147,58 +147,99 @@ function normalizeDate(value, endOfDay = false) {
  * from, to: YYYY-MM-DD (فلتر حسب created_at)
  */
 export async function list(req, res) {
-  const { branch_id, table_id, status, from: fromDate, to: toDate, page = 1, limit = 20 } = req.query;
+  const {
+    branch_id,
+    table_id,
+    status,
+    from: fromDate,
+    to: toDate,
+    page = 1,
+    limit = 20,
+  } = req.query;
+
   const merchant_id = req.user.merchant_id;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const fromIndex = (pageNum - 1) * limitNum;
+  const toIndex = fromIndex + limitNum - 1;
+
+  let scopedBranchId = branch_id || null;
 
   if (req.user.role === "cashier" || req.user.role === "kitchen") {
-    const scopeBranch = branch_id || req.user.branch_id;
-    if (!scopeBranch || String(scopeBranch) !== String(req.user.branch_id)) {
+    if (!req.user.branch_id) {
       return res.status(403).json({ error: "Access limited to your branch" });
     }
+
+    if (
+      scopedBranchId &&
+      String(scopedBranchId) !== String(req.user.branch_id)
+    ) {
+      return res.status(403).json({ error: "Access limited to your branch" });
+    }
+
+    scopedBranchId = req.user.branch_id;
   }
 
   let query = supabaseAdmin
     .from("table_services")
-    .select("*", { count: "exact" })
+    .select(
+      `
+      id,
+      merchant_id,
+      branch_id,
+      table_id,
+      status,
+      created_at,
+      updated_at
+    `,
+      { count: "exact" },
+    )
     .eq("merchant_id", merchant_id);
 
-  if (branch_id) query = query.eq("branch_id", branch_id);
-  if (req.user.branch_id && (req.user.role === "cashier" || req.user.role === "kitchen")) {
-    query = query.eq("branch_id", req.user.branch_id);
-  }
+  if (scopedBranchId) query = query.eq("branch_id", scopedBranchId);
   if (table_id) query = query.eq("table_id", table_id);
+
   if (status) {
-    const statuses = status.split(",").map((s) => s.trim());
-    query = query.in("status", statuses);
+    const statuses = status
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (statuses.length) {
+      query = query.in("status", statuses);
+    }
   }
 
   const fromNormalized = normalizeDate(fromDate, false);
   const toNormalized = normalizeDate(toDate, true);
+
   if (fromNormalized) query = query.gte("created_at", fromNormalized);
   if (toNormalized) query = query.lte("created_at", toNormalized);
 
-  const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
-  const from = (pageNum - 1) * limitNum;
-  const to = from + limitNum - 1;
-
   query = query
     .order("created_at", { ascending: false })
-    .range(from, to);
+    .range(fromIndex, toIndex);
 
   const { data, error, count } = await query;
   if (error) return res.status(500).json({ error: error.message });
 
   const rows = data ?? [];
   const tableIds = [...new Set(rows.map((r) => r.table_id).filter(Boolean))];
-  const { data: tables } =
-    tableIds.length > 0
-      ? await supabaseAdmin
-          .from("table")
-          .select("id, number")
-          .in("id", tableIds)
-      : { data: [] };
-  const tableById = new Map((tables || []).map((t) => [String(t.id), t]));
+
+  let tableById = new Map();
+
+  if (tableIds.length > 0) {
+    const { data: tables, error: tablesError } = await supabaseAdmin
+      .from("table")
+      .select("id, number")
+      .in("id", tableIds);
+
+    if (tablesError) {
+      return res.status(500).json({ error: tablesError.message });
+    }
+
+    tableById = new Map((tables || []).map((t) => [String(t.id), t]));
+  }
 
   const enriched = rows.map((r) => ({
     ...r,
@@ -209,7 +250,8 @@ export async function list(req, res) {
   }));
 
   const total = count ?? 0;
-  res.json({
+
+  return res.json({
     data: enriched,
     pagination: {
       page: pageNum,
